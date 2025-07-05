@@ -115,8 +115,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             dataIndex += terrain.BytesPerRow;
         }
 
-
-        GeneratePNG();
+        // Removed PNG generation to prevent accumulating files and improve performance
+        // GeneratePNG();
     }
 
     public void GeneratePNG()
@@ -153,6 +153,33 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
 
 
+    private void HandleToggleFollower()
+    {
+        if (Settings.ToggleFollower.PressedOnce())
+        {
+            Settings.IsFollowEnabled.SetValueNoEvent(!Settings.IsFollowEnabled.Value);
+            
+            // Reset tracking state to re-acquire leader position
+            ResetFollowerTracking();
+        }
+    }
+
+    /// <summary>
+    /// Resets follower tracking state without clearing area transitions.
+    /// Used when manually toggling follower to ensure fresh tracking.
+    /// </summary>
+    private void ResetFollowerTracking()
+    {
+        _tasks = new List<TaskNode>();
+        _followTarget = null;
+        _lastTargetPosition = Vector3.Zero;
+        _lastPlayerPosition = Vector3.Zero;
+        _hasUsedWP = false;
+        
+        // Don't reset _areaTransitions since they're still valid for current area
+        LogMessage("Follower tracking reset - will re-acquire leader position", 5);
+    }
+
     private void MouseoverItem(Entity item)
     {
         var uiLoot = GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(I => I.IsVisible && I.ItemOnGround.Id == item.Id);
@@ -162,110 +189,127 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             Mouse.SetCursorPos(new Vector2(
                 clickPos.X + random.Next(-15, 15),
                 clickPos.Y + random.Next(-10, 10)));
-            Thread.Sleep(30 + random.Next(Settings.BotInputFrequency));
+            // Removed Thread.Sleep to prevent UI freezing
         }
     }
 
     public override Job Tick()
     {
-
-        //Dont run logic if we're dead!
+        // Don't run logic if we're dead!
         if (!GameController.Player.IsAlive)
             return null;
 
-        if (Settings.ToggleFollower.PressedOnce())
-        {
-            Settings.IsFollowEnabled.SetValueNoEvent(!Settings.IsFollowEnabled.Value);
-            _tasks = new List<TaskNode>();
-        }
+        HandleToggleFollower();
 
         if (!Settings.IsFollowEnabled.Value)
             return null;
 
-
-        //Cache the current follow target (if present)
+        // Cache the current follow target (if present)
         _followTarget = GetFollowingTarget();
+        
+        PlanTasks();
+        ExecuteTasks();
+
+        _lastPlayerPosition = GameController.Player.Pos;
+        return null;
+    }
+
+    private void PlanTasks()
+    {
         if (_followTarget != null)
         {
             var distanceFromFollower = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-            //We are NOT within clear path distance range of leader. Logic can continue
+            
+            // We are NOT within clear path distance range of leader. Logic can continue
             if (distanceFromFollower >= Settings.ClearPathDistance.Value)
             {
-                //Leader moved VERY far in one frame. Check for transition to use to follow them.
-                var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
-                if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
-                {
-                    var transition = _areaTransitions.Values.OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).FirstOrDefault();
-                    var dist = Vector3.Distance(_lastTargetPosition, transition.Pos);
-                    if (Vector3.Distance(_lastTargetPosition, transition.Pos) < Settings.ClearPathDistance.Value)
-                        _tasks.Add(new TaskNode(transition.Pos, 200, TaskNode.TaskNodeType.Transition));
-                }
-                //We have no path, set us to go to leader pos.
-                else if (_tasks.Count == 0)
-                    _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
-                //We have a path. Check if the last task is far enough away from current one to add a new task node.
-                else
-                {
-                    var distanceFromLastTask = Vector3.Distance(_tasks.Last().WorldPosition, _followTarget.Pos);
-                    if (distanceFromLastTask >= Settings.PathfindingNodeDistance)
-                        _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
-                }
+                HandleDistantLeader();
             }
             else
             {
-                //Clear all tasks except for looting/claim portal (as those only get done when we're within range of leader. 
-                if (_tasks.Count > 0)
-                {
-                    for (var i = _tasks.Count - 1; i >= 0; i--)
-                        if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
-                            _tasks.RemoveAt(i);
-                }
-                else if (Settings.IsCloseFollowEnabled.Value)
-                {
-                    //Close follow logic. We have no current tasks. Check if we should move towards leader
-                    if (distanceFromFollower >= Settings.PathfindingNodeDistance.Value)
-                        _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
-                }
-
-                //Check if we should add quest loot logic. We're close to leader already
-                var questLoot = GetLootableQuestItem();
-                if (questLoot != null &&
-                    Vector3.Distance(GameController.Player.Pos, questLoot.Pos) < Settings.ClearPathDistance.Value &&
-                    _tasks.FirstOrDefault(I => I.Type == TaskNode.TaskNodeType.Loot) == null)
-                    _tasks.Add(new TaskNode(questLoot.Pos, Settings.ClearPathDistance, TaskNode.TaskNodeType.Loot));
-
-                else if (!_hasUsedWP)
-                {
-                    //Check if there's a waypoint nearby
-                    var waypoint = GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type == ExileCore.Shared.Enums.EntityType.Waypoint &&
-                        Vector3.Distance(GameController.Player.Pos, I.Pos) < Settings.ClearPathDistance);
-
-                    if (waypoint != null)
-                    {
-                        _hasUsedWP = true;
-                        _tasks.Add(new TaskNode(waypoint.Pos, Settings.ClearPathDistance, TaskNode.TaskNodeType.ClaimWaypoint));
-                    }
-
-                }
-
+                HandleNearbyLeader(distanceFromFollower);
             }
             _lastTargetPosition = _followTarget.Pos;
         }
-        //Leader is null but we have tracked them this map.
-        //Try using transition to follow them to their map
-        else if (_tasks.Count == 0 &&
-            _lastTargetPosition != Vector3.Zero)
+        // Leader is null but we have tracked them this map.
+        // Try using transition to follow them to their map
+        else if (_tasks.Count == 0 && _lastTargetPosition != Vector3.Zero)
         {
+            HandleMissingLeader();
+        }
+    }
 
-            var transOptions = _areaTransitions.Values.
-                Where(I => Vector3.Distance(_lastTargetPosition, I.Pos) < Settings.ClearPathDistance).
-                OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).ToArray();
-            if (transOptions.Length > 0)
-                _tasks.Add(new TaskNode(transOptions[random.Next(transOptions.Length)].Pos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Transition));
+    private void HandleDistantLeader()
+    {
+        // Leader moved VERY far in one frame. Check for transition to use to follow them.
+        var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
+        if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
+        {
+            var transition = _areaTransitions.Values.OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).FirstOrDefault();
+            if (transition != null && Vector3.Distance(_lastTargetPosition, transition.Pos) < Settings.ClearPathDistance.Value)
+                _tasks.Add(new TaskNode(transition.Pos, Settings.TransitionDistance, TaskNode.TaskNodeType.Transition));
+        }
+        // We have no path, set us to go to leader pos.
+        else if (_tasks.Count == 0)
+            _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
+        // We have a path. Check if the last task is far enough away from current one to add a new task node.
+        else
+        {
+            var distanceFromLastTask = Vector3.Distance(_tasks.Last().WorldPosition, _followTarget.Pos);
+            if (distanceFromLastTask >= Settings.PathfindingNodeDistance)
+                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
+        }
+    }
+
+    private void HandleNearbyLeader(float distanceFromFollower)
+    {
+        // Clear all tasks except for looting/claim portal (as those only get done when we're within range of leader.)
+        if (_tasks.Count > 0)
+        {
+            for (var i = _tasks.Count - 1; i >= 0; i--)
+                if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
+                    _tasks.RemoveAt(i);
+        }
+        else if (Settings.IsCloseFollowEnabled.Value)
+        {
+            // Close follow logic. We have no current tasks. Check if we should move towards leader
+            if (distanceFromFollower >= Settings.PathfindingNodeDistance.Value)
+                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
         }
 
+        // Check if we should add quest loot logic. We're close to leader already
+        var questLoot = GetLootableQuestItem();
+        if (questLoot != null &&
+            Vector3.Distance(GameController.Player.Pos, questLoot.Pos) < Settings.ClearPathDistance.Value &&
+            _tasks.FirstOrDefault(I => I.Type == TaskNode.TaskNodeType.Loot) == null)
+            _tasks.Add(new TaskNode(questLoot.Pos, Settings.ClearPathDistance, TaskNode.TaskNodeType.Loot));
 
-        //We have our tasks, now we need to perform in game logic with them.
+        else if (!_hasUsedWP)
+        {
+            // Check if there's a waypoint nearby
+            var waypoint = GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type == ExileCore.Shared.Enums.EntityType.Waypoint &&
+                Vector3.Distance(GameController.Player.Pos, I.Pos) < Settings.ClearPathDistance);
+
+            if (waypoint != null)
+            {
+                _hasUsedWP = true;
+                _tasks.Add(new TaskNode(waypoint.Pos, Settings.ClearPathDistance, TaskNode.TaskNodeType.ClaimWaypoint));
+            }
+        }
+    }
+
+    private void HandleMissingLeader()
+    {
+        var transOptions = _areaTransitions.Values
+            .Where(I => Vector3.Distance(_lastTargetPosition, I.Pos) < Settings.ClearPathDistance)
+            .OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).ToArray();
+        if (transOptions.Length > 0)
+            _tasks.Add(new TaskNode(transOptions[random.Next(transOptions.Length)].Pos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Transition));
+    }
+
+    private void ExecuteTasks()
+    {
+        // We have our tasks, now we need to perform in game logic with them.
         if (DateTime.Now > _nextBotAction && _tasks.Count > 0)
         {
             var currentTask = _tasks.First();
@@ -295,9 +339,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         return null;
 
                     Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
-                    Thread.Sleep(random.Next(25) + 30);
+                    // Removed Thread.Sleep calls to prevent UI freezing
                     Input.KeyDown(Settings.MovementKey);
-                    Thread.Sleep(random.Next(25) + 30);
                     Input.KeyUp(Settings.MovementKey);
 
                     //Within bounding range. Task is complete
@@ -316,16 +359,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                             _tasks.RemoveAt(0);
 
                         Input.KeyUp(Settings.MovementKey);
-                        Thread.Sleep(Settings.BotInputFrequency);
+                        // Removed Thread.Sleep to prevent UI freezing
                         //Pause for long enough for movement to hopefully be finished.
                         var targetInfo = questLoot.GetComponent<Targetable>();
                         if (!targetInfo.isTargeted)
                             MouseoverItem(questLoot);
                         if (targetInfo.isTargeted)
                         {
-                            Thread.Sleep(25);
+                            // Removed Thread.Sleep calls to prevent UI freezing
                             Mouse.LeftMouseDown();
-                            Thread.Sleep(25 + random.Next(Settings.BotInputFrequency));
                             Mouse.LeftMouseUp();
                             _nextBotAction = DateTime.Now.AddSeconds(1);
                         }
@@ -347,43 +389,41 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         {
                             //Walk towards the transition
                             Mouse.SetCursorPosHuman2(screenPos);
-                            Thread.Sleep(random.Next(25) + 30);
+                            // Removed Thread.Sleep calls to prevent UI freezing
                             Input.KeyDown(Settings.MovementKey);
-                            Thread.Sleep(random.Next(25) + 30);
                             Input.KeyUp(Settings.MovementKey);
                         }
                         currentTask.AttemptCount++;
-                        if (currentTask.AttemptCount > 3)
+                        if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
                             _tasks.RemoveAt(0);
                         break;
                     }
 
                 case TaskNode.TaskNodeType.ClaimWaypoint:
                     {
-                        if (Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition) > 150)
+                        if (Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition) > Settings.WaypointDistance)
                         {
                             var screenPos = WorldToValidScreenPosition(currentTask.WorldPosition);
                             Input.KeyUp(Settings.MovementKey);
-                            Thread.Sleep(Settings.BotInputFrequency);
+                            // Removed Thread.Sleep to prevent UI freezing
                             Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
                             _nextBotAction = DateTime.Now.AddSeconds(1);
                         }
                         currentTask.AttemptCount++;
-                        if (currentTask.AttemptCount > 3)
+                        if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
                             _tasks.RemoveAt(0);
                         break;
                     }
             }
         }
-        _lastPlayerPosition = GameController.Player.Pos;
-        return null;
     }
 
     private bool CheckDashTerrain(Vector2 targetPosition)
     {
+        // Validate terrain data exists
+        if (_tiles == null || _numCols <= 0 || _numRows <= 0)
+            return false;
 
-        //TODO: Completely re-write this garbage. 
-        //It's not taking into account a lot of stuff, horribly inefficient and just not the right way to do this.
         //Calculate the straight path from us to the target (this would be waypoints normally)
         var distance = Vector2.Distance(GameController.Player.GridPos, targetPosition);
         var dir = targetPosition - GameController.Player.GridPos;
@@ -393,12 +433,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var distanceInWall = 0;
 
         var shouldDash = false;
-        var points = new List<System.Drawing.Point>();
-        for (var i = 0; i < 500; i++)
+        var points = new HashSet<System.Drawing.Point>(); // Use HashSet for O(1) lookups instead of O(n)
+        
+        for (var i = 0; i < Settings.MaxPathfindingIterations; i++)
         {
             var v2Point = GameController.Player.GridPos + i * dir;
             var point = new System.Drawing.Point((int)(GameController.Player.GridPos.X + i * dir.X),
                 (int)(GameController.Player.GridPos.Y + i * dir.Y));
+
+            // Bounds checking to prevent array index out of bounds
+            if (point.X < 0 || point.X >= _numCols || point.Y < 0 || point.Y >= _numRows)
+                break;
 
             if (points.Contains(point))
                 continue;
@@ -434,11 +479,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
         if (shouldDash)
         {
-            _nextBotAction = DateTime.Now.AddMilliseconds(500 + random.Next(Settings.BotInputFrequency));
+            _nextBotAction = DateTime.Now.AddMilliseconds(Settings.DashCooldown + random.Next(Settings.BotInputFrequency));
             Mouse.SetCursorPos(WorldToValidScreenPosition(targetPosition.GridToWorld(_followTarget == null ? GameController.Player.Pos.Z : _followTarget.Pos.Z)));
-            Thread.Sleep(50 + random.Next(Settings.BotInputFrequency));
+            // Removed Thread.Sleep calls to prevent UI freezing
             Input.KeyDown(Settings.DashKey);
-            Thread.Sleep(15 + random.Next(Settings.BotInputFrequency));
             Input.KeyUp(Settings.DashKey);
             return true;
         }
@@ -448,16 +492,25 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private Entity GetFollowingTarget()
     {
-        var leaderName = Settings.LeaderName.Value.ToLower();
+        var leaderName = Settings.LeaderName.Value?.ToLower();
+        if (string.IsNullOrEmpty(leaderName))
+            return null;
+            
         try
         {
             return GameController.Entities
                 .Where(x => x.Type == ExileCore.Shared.Enums.EntityType.Player)
-                .FirstOrDefault(x => x.GetComponent<Player>().PlayerName.ToLower() == leaderName);
+                .FirstOrDefault(x => x.GetComponent<Player>()?.PlayerName?.ToLower() == leaderName);
         }
-        // Sometimes we can get "Collection was modified; enumeration operation may not execute" exception
-        catch
+        catch (InvalidOperationException ex)
         {
+            // Collection was modified during enumeration
+            LogMessage($"GetFollowingTarget: Collection modified - {ex.Message}", 5);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"GetFollowingTarget: Unexpected error - {ex.Message}", 1);
             return null;
         }
     }
@@ -472,13 +525,22 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 .Where(e => e.GetComponent<WorldItem>() != null)
                 .FirstOrDefault(e =>
                 {
-                    Entity itemEntity = e.GetComponent<WorldItem>().ItemEntity;
-                    return GameController.Files.BaseItemTypes.Translate(itemEntity.Path).ClassName ==
-                            "QuestItem";
+                    var worldItem = e.GetComponent<WorldItem>();
+                    if (worldItem?.ItemEntity == null) return false;
+                    
+                    var baseItemType = GameController.Files.BaseItemTypes.Translate(worldItem.ItemEntity.Path);
+                    return baseItemType?.ClassName == "QuestItem";
                 });
         }
-        catch
+        catch (InvalidOperationException ex)
         {
+            // Collection was modified during enumeration
+            LogMessage($"GetLootableQuestItem: Collection modified - {ex.Message}", 5);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"GetLootableQuestItem: Unexpected error - {ex.Message}", 1);
             return null;
         }
     }
