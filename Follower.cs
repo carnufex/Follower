@@ -326,7 +326,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 else
                 {
                     _lastPlayerPosition = GameController.Player.Pos;
-                    return null;
+                    return;
                 }
             }
 
@@ -336,7 +336,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency + random.Next(Settings.BotInputFrequency));
 
                     if (Settings.IsDashEnabled && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
-                        return null;
+                        return;
 
                     Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
                     // Removed Thread.Sleep calls to prevent UI freezing
