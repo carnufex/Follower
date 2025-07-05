@@ -1,5 +1,0 @@
-Build failed:
-[7/5/2025 4:59:33 PM, C:\Users\Admin\Documents\POE1\ExileApi-Compiled-3.26.0.0.4\Plugins\Source\Follower\Follower.cs(329, 21)]
-CS0127: Since 'Follower.ExecuteTasks()' returns void, a return keyword must not be followed by an object expression
-[7/5/2025 4:59:33 PM, C:\Users\Admin\Documents\POE1\ExileApi-Compiled-3.26.0.0.4\Plugins\Source\Follower\Follower.cs(339, 25)]
-CS0127: Since 'Follower.ExecuteTasks()' returns void, a return keyword must not be followed by an object expression
