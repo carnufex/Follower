@@ -32,6 +32,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private bool _isSearchingForTeleport = false;
     private DateTime _teleportSearchStartTime;
     private readonly TimeSpan _teleportSearchTimeout = TimeSpan.FromSeconds(30); // Stop searching after 30 seconds
+    
+    // Gem leveling integration variables
+    private DateTime _lastGemLevelCheck = DateTime.MinValue;
+    private bool _isLevelingGems = false;
+    private DateTime _gemLevelingStartTime;
 
 
     private List<TaskNode> _tasks = new List<TaskNode>();
@@ -68,6 +73,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastKnownGoodPosition = Vector3.Zero;
         _lastDistanceToTarget = 0f;
         _isSearchingForTeleport = false;
+        
+        // Reset gem leveling state
+        _lastGemLevelCheck = DateTime.MinValue;
+        _isLevelingGems = false;
     }
 
     public override void AreaChange(AreaInstance area)
@@ -193,6 +202,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastDistanceToTarget = 0f;
         _isSearchingForTeleport = false;
         
+        // Reset gem leveling state
+        _lastGemLevelCheck = DateTime.MinValue;
+        _isLevelingGems = false;
+        
         // Don't reset _areaTransitions since they're still valid for current area
         LogMessage("Follower tracking reset - will re-acquire leader position", 5);
     }
@@ -260,12 +273,20 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             _lastTargetPosition = _followTarget.Pos;
             _lastDistanceToTarget = distanceFromFollower;
+            
+            // Check for gems that need leveling
+            CheckAndLevelGems(distanceFromFollower);
         }
         // Leader is null but we have tracked them this map.
         // Try using transition to follow them to their map
         else if (_tasks.Count == 0 && _lastTargetPosition != Vector3.Zero)
         {
             HandleMissingLeader();
+        }
+        // Check for gems even when leader is not present (when stopped)
+        else if (_tasks.Count == 0)
+        {
+            CheckAndLevelGems(float.MaxValue);
         }
     }
 
@@ -395,10 +416,145 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     LogMessage($"Moving to last known position: {_lastKnownGoodPosition.X:F0}, {_lastKnownGoodPosition.Y:F0} (distance: {distanceToLastPosition:F0})", 5);
                 }
             }
-        }
-    }
+                 }
+     }
 
-    private void ExecuteTasks()
+     private void CheckAndLevelGems(float distanceToTarget)
+     {
+         if (!Settings.AutoLevelGems.Value || !GameController.Player.IsAlive)
+             return;
+
+         var now = DateTime.Now;
+         
+         // Check if enough time has passed since last gem level check
+         if (now - _lastGemLevelCheck < TimeSpan.FromMilliseconds(Settings.GemLevelCheckInterval.Value))
+             return;
+
+         _lastGemLevelCheck = now;
+
+         // Determine if we should level gems based on conditions
+         bool shouldLevelGems = false;
+         
+         if (Settings.LevelGemsWhenClose.Value && _followTarget != null && distanceToTarget <= Settings.NormalFollowDistance.Value)
+         {
+             // Close to leader, safe to level gems
+             shouldLevelGems = true;
+         }
+         else if (Settings.LevelGemsWhenStopped.Value && _tasks.Count == 0)
+         {
+             // No tasks, we're stopped, safe to level gems
+             shouldLevelGems = true;
+         }
+
+         if (shouldLevelGems && HasGemsToLevel())
+         {
+             TriggerGemLeveling();
+         }
+     }
+
+     private bool HasGemsToLevel()
+     {
+         try
+         {
+             var gemLevelUpPanel = GameController.IngameState.IngameUi?.GemLvlUpPanel;
+             if (gemLevelUpPanel == null || !gemLevelUpPanel.IsVisible)
+                 return false;
+
+             var gemsToLvlUp = gemLevelUpPanel.GemsToLvlUp;
+             if (gemsToLvlUp == null || !gemsToLvlUp.Any())
+                 return false;
+
+             foreach (var gemGroup in gemsToLvlUp)
+             {
+                 if (gemGroup.Children.Any(elem => elem.Text != null && elem.Text.Contains("Click to level")))
+                 {
+                     return true;
+                 }
+             }
+
+             return false;
+         }
+         catch (Exception ex)
+         {
+             LogMessage($"HasGemsToLevel error: {ex.Message}", 1);
+             return false;
+         }
+     }
+
+     private void TriggerGemLeveling()
+     {
+         if (_isLevelingGems)
+             return;
+
+         try
+         {
+             _isLevelingGems = true;
+             _gemLevelingStartTime = DateTime.Now;
+             
+             // Get the first gem that needs leveling
+             var gemToLevel = GetFirstLevelableGem();
+             if (gemToLevel != null)
+             {
+                 LogMessage("Auto-leveling gem detected by follower", 5);
+                 
+                 // Use the same approach as SkillGems plugin
+                 var gemLevelButton = gemToLevel.GetChildAtIndex(1);
+                 if (gemLevelButton != null)
+                 {
+                     // Set cursor position and click
+                     var windowRect = GameController.Window.GetWindowRectangle();
+                     var buttonCenter = gemLevelButton.GetClientRect().Center;
+                     var screenPos = windowRect.TopLeft + buttonCenter;
+                     
+                     Mouse.SetCursorPos(screenPos);
+                     System.Threading.Thread.Sleep(50); // Small delay for cursor positioning
+                     Mouse.LeftClick(25);
+                     
+                     LogMessage($"Clicked gem level button at {screenPos.X}, {screenPos.Y}", 5);
+                 }
+             }
+         }
+         catch (Exception ex)
+         {
+             LogMessage($"TriggerGemLeveling error: {ex.Message}", 1);
+         }
+         finally
+         {
+             // Reset leveling state after a short delay
+             Task.Delay(1000).ContinueWith(_ => _isLevelingGems = false);
+         }
+     }
+
+     private ExileCore.PoEMemory.Elements.GemLevelUpElement GetFirstLevelableGem()
+     {
+         try
+         {
+             var gemLevelUpPanel = GameController.IngameState.IngameUi?.GemLvlUpPanel;
+             if (gemLevelUpPanel == null || !gemLevelUpPanel.IsVisible)
+                 return null;
+
+             var gemsToLvlUp = gemLevelUpPanel.GemsToLvlUp;
+             if (gemsToLvlUp == null || !gemsToLvlUp.Any())
+                 return null;
+
+             foreach (var gemGroup in gemsToLvlUp)
+             {
+                 if (gemGroup.Children.Any(elem => elem.Text != null && elem.Text.Contains("Click to level")))
+                 {
+                     return gemGroup;
+                 }
+             }
+
+             return null;
+         }
+         catch (Exception ex)
+         {
+             LogMessage($"GetFirstLevelableGem error: {ex.Message}", 1);
+             return null;
+         }
+     }
+
+     private void ExecuteTasks()
     {
         // We have our tasks, now we need to perform in game logic with them.
         if (DateTime.Now > _nextBotAction && _tasks.Count > 0)
@@ -702,6 +858,16 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             var searchTime = DateTime.Now - _teleportSearchStartTime;
             Graphics.DrawText($"TELEPORT SEARCH: {searchTime.TotalSeconds:F1}s", new Vector2(500, 160), SharpDX.Color.Yellow);
+        }
+        
+        // Show gem leveling status
+        if (_isLevelingGems)
+        {
+            Graphics.DrawText("LEVELING GEMS", new Vector2(500, 180), SharpDX.Color.Cyan);
+        }
+        else if (Settings.AutoLevelGems.Value && HasGemsToLevel())
+        {
+            Graphics.DrawText("GEMS AVAILABLE", new Vector2(500, 180), SharpDX.Color.Green);
         }
         
         var counter = 0;
