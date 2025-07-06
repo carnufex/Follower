@@ -1,4 +1,0 @@
-Build failed:
-[7/6/2025 1:04:56 PM, C:\Users\Admin\Documents\POE1\ExileApi-Compiled-3.26.0.0.4\Plugins\Source\Follower\Follower.cs(528, 43)]
-CS0234: The type or namespace name 'GemLevelUpElement' does not exist in the namespace 'ExileCore.PoEMemory.Elements' (are you
-missing an assembly reference?)

@@ -1,4 +1,5 @@
 ﻿using ExileCore;
+using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.MemoryObjects;
 using SharpDX;
@@ -525,7 +526,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
          }
      }
 
-     private ExileCore.PoEMemory.Elements.GemLevelUpElement GetFirstLevelableGem()
+     private Element GetFirstLevelableGem()
      {
          try
          {
