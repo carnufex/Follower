@@ -25,6 +25,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private Entity _followTarget;
 
     private bool _hasUsedWP = false;
+    
+    // Teleport detection variables
+    private Vector3 _lastKnownGoodPosition = Vector3.Zero;
+    private float _lastDistanceToTarget = 0f;
+    private bool _isSearchingForTeleport = false;
+    private DateTime _teleportSearchStartTime;
+    private readonly TimeSpan _teleportSearchTimeout = TimeSpan.FromSeconds(30); // Stop searching after 30 seconds
 
 
     private List<TaskNode> _tasks = new List<TaskNode>();
@@ -56,6 +63,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastPlayerPosition = Vector3.Zero;
         _areaTransitions = new Dictionary<uint, Entity>();
         _hasUsedWP = false;
+        
+        // Reset teleport detection
+        _lastKnownGoodPosition = Vector3.Zero;
+        _lastDistanceToTarget = 0f;
+        _isSearchingForTeleport = false;
     }
 
     public override void AreaChange(AreaInstance area)
@@ -176,6 +188,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastPlayerPosition = Vector3.Zero;
         _hasUsedWP = false;
         
+        // Reset teleport detection
+        _lastKnownGoodPosition = Vector3.Zero;
+        _lastDistanceToTarget = 0f;
+        _isSearchingForTeleport = false;
+        
         // Don't reset _areaTransitions since they're still valid for current area
         LogMessage("Follower tracking reset - will re-acquire leader position", 5);
     }
@@ -220,8 +237,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             var distanceFromFollower = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
             
+            // Check for teleport detection
+            if (Settings.SearchLastPosition.Value)
+            {
+                CheckForTeleportJump(distanceFromFollower);
+            }
+            
+            // If we're searching for a teleport location, prioritize that
+            if (_isSearchingForTeleport)
+            {
+                HandleTeleportSearch(distanceFromFollower);
+            }
             // We are NOT within clear path distance range of leader. Logic can continue
-            if (distanceFromFollower >= Settings.ClearPathDistance.Value)
+            else if (distanceFromFollower >= Settings.ClearPathDistance.Value)
             {
                 HandleDistantLeader();
             }
@@ -229,7 +257,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             {
                 HandleNearbyLeader(distanceFromFollower);
             }
+            
             _lastTargetPosition = _followTarget.Pos;
+            _lastDistanceToTarget = distanceFromFollower;
         }
         // Leader is null but we have tracked them this map.
         // Try using transition to follow them to their map
@@ -305,6 +335,67 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             .OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).ToArray();
         if (transOptions.Length > 0)
             _tasks.Add(new TaskNode(transOptions[random.Next(transOptions.Length)].Pos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Transition));
+    }
+
+    private void CheckForTeleportJump(float currentDistance)
+    {
+        // Don't check on first tick or if we don't have previous data
+        if (_lastDistanceToTarget == 0f || _lastTargetPosition == Vector3.Zero)
+            return;
+
+        // Check if the leader was within normal follow distance and suddenly jumped far away
+        bool wasNearby = _lastDistanceToTarget <= Settings.NormalFollowDistance.Value;
+        bool nowFarAway = currentDistance >= Settings.TeleportDetectionDistance.Value;
+        
+        if (wasNearby && nowFarAway && !_isSearchingForTeleport)
+        {
+            // Detected a teleport! Store the last known good position
+            _lastKnownGoodPosition = _lastTargetPosition;
+            _isSearchingForTeleport = true;
+            _teleportSearchStartTime = DateTime.Now;
+            
+            // Clear current tasks to focus on teleport search
+            _tasks.Clear();
+            
+            LogMessage($"Teleport detected! Distance jumped from {_lastDistanceToTarget:F0} to {currentDistance:F0}. Searching last position at {_lastKnownGoodPosition.X:F0}, {_lastKnownGoodPosition.Y:F0}", 5);
+        }
+    }
+
+    private void HandleTeleportSearch(float currentDistance)
+    {
+        // Check if we should stop searching (timeout or leader came back to normal range)
+        if (DateTime.Now - _teleportSearchStartTime > _teleportSearchTimeout)
+        {
+            LogMessage("Teleport search timed out - resuming normal follow", 5);
+            _isSearchingForTeleport = false;
+            return;
+        }
+        
+        // If leader is back within normal range, stop searching
+        if (currentDistance <= Settings.NormalFollowDistance.Value)
+        {
+            LogMessage("Leader returned to normal range - stopping teleport search", 5);
+            _isSearchingForTeleport = false;
+            return;
+        }
+        
+        // Navigate to the last known good position to find the door/teleport
+        if (_lastKnownGoodPosition != Vector3.Zero)
+        {
+            var distanceToLastPosition = Vector3.Distance(GameController.Player.Pos, _lastKnownGoodPosition);
+            
+            // If we're not close to the last known position, go there
+            if (distanceToLastPosition > Settings.PathfindingNodeDistance.Value)
+            {
+                // Clear movement tasks and add task to go to last known position
+                _tasks.RemoveAll(t => t.Type == TaskNode.TaskNodeType.Movement);
+                if (_tasks.FirstOrDefault(t => t.WorldPosition == _lastKnownGoodPosition) == null)
+                {
+                    _tasks.Add(new TaskNode(_lastKnownGoodPosition, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Movement));
+                    LogMessage($"Moving to last known position: {_lastKnownGoodPosition.X:F0}, {_lastKnownGoodPosition.Y:F0} (distance: {distanceToLastPosition:F0})", 5);
+                }
+            }
+        }
     }
 
     private void ExecuteTasks()
@@ -593,10 +684,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 var end = WorldToValidScreenPosition(_tasks[i].WorldPosition);
                 Graphics.DrawLine(start, end, 2, SharpDX.Color.Pink);
             }
+        
+        // Draw last known good position if we're in teleport search mode
+        if (_isSearchingForTeleport && _lastKnownGoodPosition != Vector3.Zero)
+        {
+            var lastPosScreen = WorldToValidScreenPosition(_lastKnownGoodPosition);
+            Graphics.DrawText("LAST POS", lastPosScreen, SharpDX.Color.Red);
+        }
+        
         var dist = _tasks.Count > 0 ? Vector3.Distance(GameController.Player.Pos, _tasks.First().WorldPosition) : 0;
         var targetDist = _lastTargetPosition == null ? "NA" : Vector3.Distance(GameController.Player.Pos, _lastTargetPosition).ToString();
         Graphics.DrawText($"Follow Enabled: {Settings.IsFollowEnabled.Value}", new Vector2(500, 120));
         Graphics.DrawText($"Task Count: {_tasks.Count} Next WP Distance: {dist} Target Distance: {targetDist}", new Vector2(500, 140));
+        
+        // Show teleport search status
+        if (_isSearchingForTeleport)
+        {
+            var searchTime = DateTime.Now - _teleportSearchStartTime;
+            Graphics.DrawText($"TELEPORT SEARCH: {searchTime.TotalSeconds:F1}s", new Vector2(500, 160), SharpDX.Color.Yellow);
+        }
+        
         var counter = 0;
         foreach (var transition in _areaTransitions)
         {
