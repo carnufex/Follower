@@ -38,6 +38,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private DateTime _lastGemLevelCheck = DateTime.MinValue;
     private bool _isLevelingGems = false;
     private DateTime _gemLevelingStartTime;
+    
+    // Dash tracking variables
+    private DateTime _lastDashTime = DateTime.MinValue;
 
 
     private List<TaskNode> _tasks = new List<TaskNode>();
@@ -78,6 +81,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Reset gem leveling state
         _lastGemLevelCheck = DateTime.MinValue;
         _isLevelingGems = false;
+        
+        // Reset dash state
+        _lastDashTime = DateTime.MinValue;
     }
 
     public override void AreaChange(AreaInstance area)
@@ -206,6 +212,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Reset gem leveling state
         _lastGemLevelCheck = DateTime.MinValue;
         _isLevelingGems = false;
+        
+        // Reset dash state
+        _lastDashTime = DateTime.MinValue;
         
         // Don't reset _areaTransitions since they're still valid for current area
         LogMessage("Follower tracking reset - will re-acquire leader position", 5);
@@ -583,8 +592,16 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 case TaskNode.TaskNodeType.Movement:
                     _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency + random.Next(Settings.BotInputFrequency));
 
-                    if (Settings.IsDashEnabled && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
-                        return;
+                    // Try aggressive dash first if enabled, fallback to terrain-based dash
+                    if (Settings.IsDashEnabled.Value)
+                    {
+                        if (TryAggressiveDash(currentTask.WorldPosition, taskDistance))
+                            return;
+                        
+                        // Fallback to original terrain-based dash for conservative users
+                        if (!Settings.AggressiveDash.Value && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
+                            return;
+                    }
 
                     Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
                     // Removed Thread.Sleep calls to prevent UI freezing
@@ -636,10 +653,18 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         else
                         {
                             //Walk towards the transition
-                            Mouse.SetCursorPosHuman2(screenPos);
-                            // Removed Thread.Sleep calls to prevent UI freezing
-                            Input.KeyDown(Settings.MovementKey);
-                            Input.KeyUp(Settings.MovementKey);
+                            // Try to dash if we're far enough away
+                            if (Settings.IsDashEnabled.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
+                            {
+                                // Dash executed, no need to move
+                            }
+                            else
+                            {
+                                Mouse.SetCursorPosHuman2(screenPos);
+                                // Removed Thread.Sleep calls to prevent UI freezing
+                                Input.KeyDown(Settings.MovementKey);
+                                Input.KeyUp(Settings.MovementKey);
+                            }
                         }
                         currentTask.AttemptCount++;
                         if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
@@ -668,6 +693,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private bool CheckDashTerrain(Vector2 targetPosition)
     {
+        // Check if dash is available (cooldown)
+        if (!IsDashAvailable())
+            return false;
+            
         // Validate terrain data exists
         if (_tiles == null || _numCols <= 0 || _numRows <= 0)
             return false;
@@ -727,15 +756,70 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
         if (shouldDash)
         {
-            _nextBotAction = DateTime.Now.AddMilliseconds(Settings.DashCooldown + random.Next(Settings.BotInputFrequency));
-            Mouse.SetCursorPos(WorldToValidScreenPosition(targetPosition.GridToWorld(_followTarget == null ? GameController.Player.Pos.Z : _followTarget.Pos.Z)));
-            // Removed Thread.Sleep calls to prevent UI freezing
-            Input.KeyDown(Settings.DashKey);
-            Input.KeyUp(Settings.DashKey);
-            return true;
+            return ExecuteDash(targetPosition.GridToWorld(_followTarget == null ? GameController.Player.Pos.Z : _followTarget.Pos.Z));
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Checks if dash is available (off cooldown)
+    /// </summary>
+    private bool IsDashAvailable()
+    {
+        var timeSinceLastDash = DateTime.Now - _lastDashTime;
+        return timeSinceLastDash.TotalMilliseconds >= Settings.DashCooldown.Value;
+    }
+
+    /// <summary>
+    /// Attempts to dash towards target for movement acceleration
+    /// </summary>
+    private bool TryAggressiveDash(Vector3 targetWorldPos, float distanceToTarget)
+    {
+        if (!Settings.IsDashEnabled.Value)
+            return false;
+
+        if (!IsDashAvailable())
+            return false;
+
+        // Only dash if target is far enough away
+        if (distanceToTarget < Settings.DashDistanceThreshold.Value)
+            return false;
+
+        // For aggressive dash, skip terrain checking and just dash
+        if (Settings.AggressiveDash.Value)
+        {
+            return ExecuteDash(targetWorldPos);
+        }
+        else
+        {
+            // Use the original terrain-based dash logic for conservative dashing
+            return CheckDashTerrain(targetWorldPos.WorldToGrid());
+        }
+    }
+
+    /// <summary>
+    /// Executes a dash towards the target position
+    /// </summary>
+    private bool ExecuteDash(Vector3 targetWorldPos)
+    {
+        try
+        {
+            _lastDashTime = DateTime.Now;
+            _nextBotAction = DateTime.Now.AddMilliseconds(Settings.DashCooldown + random.Next(Settings.BotInputFrequency));
+            
+            Mouse.SetCursorPos(WorldToValidScreenPosition(targetWorldPos));
+            Input.KeyDown(Settings.DashKey);
+            Input.KeyUp(Settings.DashKey);
+            
+            LogMessage($"Executed aggressive dash towards target (distance: {Vector3.Distance(GameController.Player.Pos, targetWorldPos):F0})", 5);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"ExecuteDash error: {ex.Message}", 1);
+            return false;
+        }
     }
 
     private Entity GetFollowingTarget()
@@ -869,6 +953,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         else if (Settings.AutoLevelGems.Value && HasGemsToLevel())
         {
             Graphics.DrawText("GEMS AVAILABLE", new Vector2(500, 180), SharpDX.Color.Green);
+        }
+        
+        // Show dash status
+        if (Settings.IsDashEnabled.Value)
+        {
+            var timeSinceLastDash = DateTime.Now - _lastDashTime;
+            var dashCooldownRemaining = Settings.DashCooldown.Value - timeSinceLastDash.TotalMilliseconds;
+            
+            if (dashCooldownRemaining > 0)
+            {
+                Graphics.DrawText($"DASH CD: {dashCooldownRemaining / 1000:F1}s", new Vector2(500, 200), SharpDX.Color.Orange);
+            }
+            else if (Settings.AggressiveDash.Value)
+            {
+                Graphics.DrawText("DASH READY (AGG)", new Vector2(500, 200), SharpDX.Color.LightGreen);
+            }
+            else
+            {
+                Graphics.DrawText("DASH READY", new Vector2(500, 200), SharpDX.Color.White);
+            }
         }
         
         var counter = 0;

@@ -18,6 +18,8 @@ public class FollowerSettings : ISettings
     [Menu("Movement Key")] public HotkeyNode MovementKey { get; set; } = Keys.T;
     [Menu("Allow Dash")] public ToggleNode IsDashEnabled { get; set; } = new ToggleNode(true);
     [Menu("Dash Key")] public HotkeyNode DashKey { get; set; } = Keys.W;
+    [Menu("Aggressive Dash")] public ToggleNode AggressiveDash { get; set; } = new ToggleNode(true);
+    [Menu("Dash Distance Threshold")] public RangeNode<int> DashDistanceThreshold { get; set; } = new RangeNode<int>(800, 200, 2000);
     [Menu("Follow Close")] public ToggleNode IsCloseFollowEnabled { get; set; } = new ToggleNode(false);
     
     // Additional configurable settings to replace magic numbers
