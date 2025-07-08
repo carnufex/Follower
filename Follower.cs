@@ -1121,7 +1121,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         try
         {
             // Check if it's time to refresh terrain
-            if (DateTime.Now - _lastTerrainRefresh < TimeSpan.FromMilliseconds(Settings.DebugTerrainRefreshRate.Value))
+            if (DateTime.Now - _lastTerrainRefresh < TimeSpan.FromMilliseconds(Settings.TerrainRefreshRate.Value))
                 return;
                 
             // Update terrain data from the game using the correct ExileCore API
