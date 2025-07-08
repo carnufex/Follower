@@ -11,9 +11,18 @@ using System.Threading.Tasks;
 using System;
 using System.Drawing;
 using System.Threading;
-
+using System.Collections;
+using ExileCore.Shared;
 
 namespace Follower;
+
+public enum PathStatus
+{
+    Clear,              // The path is fully walkable
+    Dashable,           // The path is blocked by a dashable obstacle (terrain value 2)
+    Blocked,            // The path is blocked by an impassable wall or terrain (terrain value 255)
+    Invalid             // The start or end point is out of bounds
+}
 public class Follower : BaseSettingsPlugin<FollowerSettings>
 {
 
@@ -41,6 +50,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     
     // Dash tracking variables
     private DateTime _lastDashTime = DateTime.MinValue;
+    
+    // PickItV2 coordination variables
+    private DateTime _pickItV2YieldStartTime = DateTime.MinValue;
+    
+    // Coroutine variables
+    private Coroutine _followerCoroutine;
+    private Coroutine _postTransitionCoroutine;
+    private bool _isTransitioning = false;
+    private DateTime _areaChangeTime = DateTime.MinValue;
 
 
     private List<TaskNode> _tasks = new List<TaskNode>();
@@ -48,6 +66,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private int _numRows, _numCols;
     private byte[,] _tiles;
+    private DateTime _lastTerrainRefresh = DateTime.MinValue;
 
     public override bool Initialise()
     {
@@ -57,6 +76,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         Input.RegisterKey(Settings.ToggleFollower.Value);
         Settings.ToggleFollower.OnValueChanged += () => { Input.RegisterKey(Settings.ToggleFollower.Value); };
 
+        StartFollowerCoroutine();
         return base.Initialise();
     }
 
@@ -84,10 +104,21 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         // Reset dash state
         _lastDashTime = DateTime.MinValue;
+        
+        // Reset PickItV2 coordination state
+        _pickItV2YieldStartTime = DateTime.MinValue;
+        
+        // Reset coroutine state
+        _areaChangeTime = DateTime.MinValue;
+        
+        // Reset terrain refresh timer
+        _lastTerrainRefresh = DateTime.MinValue;
     }
 
     public override void AreaChange(AreaInstance area)
     {
+        _isTransitioning = true;
+        _areaChangeTime = DateTime.Now;
         ResetPathing();
 
         //Load initial transitions!
@@ -217,7 +248,180 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastDashTime = DateTime.MinValue;
         
         // Don't reset _areaTransitions since they're still valid for current area
-        LogMessage("Follower tracking reset - will re-acquire leader position", 5);
+        // Follower tracking reset - will re-acquire leader position
+    }
+    
+    /// <summary>
+    /// Starts the main follower coroutine
+    /// </summary>
+    private void StartFollowerCoroutine()
+    {
+        if (_followerCoroutine == null || !_followerCoroutine.Running)
+        {
+            _followerCoroutine = new Coroutine(FollowerLogic(), this, "FollowerLogic");
+            Core.ParallelRunner.Run(_followerCoroutine);
+        }
+    }
+    
+    /// <summary>
+    /// Starts the post-transition grace period coroutine
+    /// </summary>
+    private void StartPostTransitionGracePeriod()
+    {
+        if (_postTransitionCoroutine == null || !_postTransitionCoroutine.Running)
+        {
+            _postTransitionCoroutine = new Coroutine(PostTransitionGracePeriod(), this, "PostTransitionGracePeriod");
+            Core.ParallelRunner.Run(_postTransitionCoroutine);
+        }
+    }
+
+    /// <summary>
+    /// Checks if PickItV2 is currently active and picking up items
+    /// </summary>
+    /// <returns>True if PickItV2 is active and we should yield control</returns>
+    private bool IsPickItV2Active()
+    {
+        if (!Settings.YieldToPickItV2.Value)
+            return false;
+            
+        try
+        {
+            // Try to get the PickItV2 plugin status through the plugin bridge
+            var pickItIsActiveMethod = GameController.PluginBridge.GetMethod<Func<bool>>("PickIt.IsActive");
+            
+            if (pickItIsActiveMethod != null)
+            {
+                bool isActive = pickItIsActiveMethod();
+                
+                // Track when we started yielding to implement timeout
+                if (isActive)
+                {
+                    if (_pickItV2YieldStartTime == DateTime.MinValue)
+                    {
+                        _pickItV2YieldStartTime = DateTime.Now;
+                    }
+                    else
+                    {
+                        // Check if we've been yielding too long
+                        var yieldDuration = DateTime.Now - _pickItV2YieldStartTime;
+                        if (yieldDuration.TotalMilliseconds > Settings.PickItV2YieldTimeout.Value)
+                        {
+                            // Reset the yield timer and continue with follower actions
+                            _pickItV2YieldStartTime = DateTime.MinValue;
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    // Reset the yield timer when PickItV2 is not active
+                    _pickItV2YieldStartTime = DateTime.MinValue;
+                }
+                
+                return isActive;
+            }
+        }
+        catch (Exception ex)
+        {
+            // If we can't communicate with PickItV2, assume it's not active
+            // This prevents the follower from getting stuck if PickItV2 isn't loaded
+            _pickItV2YieldStartTime = DateTime.MinValue;
+        }
+        
+        return false;
+    }
+
+    /// <summary>
+    /// Executes a mouse action only if PickItV2 is not currently active
+    /// </summary>
+    /// <param name="mouseAction">The mouse action to execute</param>
+    /// <returns>True if the action was executed, false if yielded to PickItV2</returns>
+    private bool ExecuteMouseActionIfPossible(Action mouseAction)
+    {
+        if (IsPickItV2Active())
+        {
+            // PickItV2 is active, yield control and delay our next action
+            _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency.Value);
+            return false;
+        }
+        
+        // PickItV2 is not active, execute the mouse action
+        mouseAction?.Invoke();
+        return true;
+    }
+    
+    /// <summary>
+    /// Main follower logic coroutine - replaces the old Tick-based approach
+    /// </summary>
+    private IEnumerator FollowerLogic()
+    {
+        while (true)
+        {
+            try
+            {
+                // Check if we should be running
+                if (!GameController.Player.IsAlive || !Settings.IsFollowEnabled.Value)
+                {
+                    yield return new WaitTime(100);
+                    continue;
+                }
+
+                // Handle toggle follower
+                HandleToggleFollower();
+
+                // Check if we need to start post-transition grace period
+                if (_isTransitioning && _areaChangeTime != DateTime.MinValue)
+                {
+                    StartPostTransitionGracePeriod();
+                    _isTransitioning = false;
+                }
+
+                // Cache the current follow target (if present)
+                _followTarget = GetFollowingTarget();
+                
+                // Refresh terrain data for dynamic obstacle detection
+                RefreshTerrainData();
+                
+                // Plan and execute tasks
+                PlanTasks();
+                yield return ExecuteTasksCoroutine();
+
+                _lastPlayerPosition = GameController.Player.Pos;
+                
+                // Yield control for a short time
+                yield return new WaitTime(Settings.BotInputFrequency.Value);
+            }
+            catch (Exception ex)
+            {
+                // Handle any errors gracefully
+                yield return new WaitTime(1000);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Post-transition grace period to wait for leader entity to sync
+    /// </summary>
+    private IEnumerator PostTransitionGracePeriod()
+    {
+        var timeoutMs = Settings.PostTransitionGracePeriod.Value;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            // Check if leader has synced properly
+            var leader = GetFollowingTarget();
+            if (leader != null && Settings.LeaderName.Value.Length > 0)
+            {
+                // Leader is present, grace period complete
+                break;
+            }
+            
+            yield return new WaitTime(100);
+        }
+        
+        // Grace period complete
+        _isTransitioning = false;
     }
 
     private void MouseoverItem(Entity item)
@@ -235,22 +439,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     public override Job Tick()
     {
-        // Don't run logic if we're dead!
-        if (!GameController.Player.IsAlive)
-            return null;
-
-        HandleToggleFollower();
-
-        if (!Settings.IsFollowEnabled.Value)
-            return null;
-
-        // Cache the current follow target (if present)
-        _followTarget = GetFollowingTarget();
+        // Monitor coroutine health and restart if needed
+        if (Settings.IsFollowEnabled.Value && GameController.Player.IsAlive)
+        {
+            if (_followerCoroutine == null || !_followerCoroutine.Running)
+            {
+                StartFollowerCoroutine();
+            }
+        }
         
-        PlanTasks();
-        ExecuteTasks();
-
-        _lastPlayerPosition = GameController.Player.Pos;
         return null;
     }
 
@@ -306,9 +503,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
         if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
         {
-            var transition = _areaTransitions.Values.OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).FirstOrDefault();
-            if (transition != null && Vector3.Distance(_lastTargetPosition, transition.Pos) < Settings.ClearPathDistance.Value)
-                _tasks.Add(new TaskNode(transition.Pos, Settings.TransitionDistance, TaskNode.TaskNodeType.Transition));
+            // Only attempt transition if leader zone info is reliable
+            if (IsLeaderZoneInfoReliable())
+            {
+                var transition = _areaTransitions.Values.OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).FirstOrDefault();
+                if (transition != null && Vector3.Distance(_lastTargetPosition, transition.Pos) < Settings.ClearPathDistance.Value)
+                    _tasks.Add(new TaskNode(transition.Pos, Settings.TransitionDistance, TaskNode.TaskNodeType.Transition));
+            }
         }
         // We have no path, set us to go to leader pos.
         else if (_tasks.Count == 0)
@@ -361,11 +562,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private void HandleMissingLeader()
     {
-        var transOptions = _areaTransitions.Values
-            .Where(I => Vector3.Distance(_lastTargetPosition, I.Pos) < Settings.ClearPathDistance)
-            .OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).ToArray();
-        if (transOptions.Length > 0)
-            _tasks.Add(new TaskNode(transOptions[random.Next(transOptions.Length)].Pos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Transition));
+        // Only attempt transition if we have a valid last known position
+        if (_lastTargetPosition != Vector3.Zero)
+        {
+            var transOptions = _areaTransitions.Values
+                .Where(I => Vector3.Distance(_lastTargetPosition, I.Pos) < Settings.ClearPathDistance)
+                .OrderBy(I => Vector3.Distance(_lastTargetPosition, I.Pos)).ToArray();
+            if (transOptions.Length > 0)
+                _tasks.Add(new TaskNode(transOptions[random.Next(transOptions.Length)].Pos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Transition));
+        }
     }
 
     private void CheckForTeleportJump(float currentDistance)
@@ -388,7 +593,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             // Clear current tasks to focus on teleport search
             _tasks.Clear();
             
-            LogMessage($"Teleport detected! Distance jumped from {_lastDistanceToTarget:F0} to {currentDistance:F0}. Searching last position at {_lastKnownGoodPosition.X:F0}, {_lastKnownGoodPosition.Y:F0}", 5);
+            // Teleport detected! Searching last known position
         }
     }
 
@@ -397,7 +602,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Check if we should stop searching (timeout or leader came back to normal range)
         if (DateTime.Now - _teleportSearchStartTime > _teleportSearchTimeout)
         {
-            LogMessage("Teleport search timed out - resuming normal follow", 5);
+            // Teleport search timed out - resuming normal follow
             _isSearchingForTeleport = false;
             return;
         }
@@ -405,7 +610,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // If leader is back within normal range, stop searching
         if (currentDistance <= Settings.NormalFollowDistance.Value)
         {
-            LogMessage("Leader returned to normal range - stopping teleport search", 5);
+            // Leader returned to normal range - stopping teleport search
             _isSearchingForTeleport = false;
             return;
         }
@@ -520,13 +725,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                      System.Threading.Thread.Sleep(50); // Small delay for cursor positioning
                      Mouse.LeftClick(25);
                      
-                     LogMessage($"Clicked gem level button at {screenPos.X}, {screenPos.Y}", 5);
+                     // Clicked gem level button
                  }
              }
          }
          catch (Exception ex)
          {
-             LogMessage($"TriggerGemLeveling error: {ex.Message}", 1);
+             // TriggerGemLeveling error occurred
          }
          finally
          {
@@ -559,16 +764,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
          }
          catch (Exception ex)
          {
-             LogMessage($"GetFirstLevelableGem error: {ex.Message}", 1);
+             // GetFirstLevelableGem error occurred
              return null;
          }
      }
 
-     private void ExecuteTasks()
-    {
-        // We have our tasks, now we need to perform in game logic with them.
-        if (DateTime.Now > _nextBotAction && _tasks.Count > 0)
-        {
+     /// <summary>
+     /// Coroutine version of ExecuteTasks - uses yielding instead of blocking
+     /// </summary>
+     private IEnumerator ExecuteTasksCoroutine()
+     {
+         // We have our tasks, now we need to perform in game logic with them.
+         if (DateTime.Now > _nextBotAction && _tasks.Count > 0)
+         {
             var currentTask = _tasks.First();
             var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
             var playerDistanceMoved = Vector3.Distance(GameController.Player.Pos, _lastPlayerPosition);
@@ -592,21 +800,41 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 case TaskNode.TaskNodeType.Movement:
                     _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency + random.Next(Settings.BotInputFrequency));
 
-                    // Try aggressive dash first if enabled, fallback to terrain-based dash
+                    // Enhanced pathfinding with PathStatus
                     if (Settings.IsDashEnabled.Value)
                     {
-                        if (TryAggressiveDash(currentTask.WorldPosition, taskDistance))
-                            return;
+                        var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
                         
-                        // Fallback to original terrain-based dash for conservative users
-                        if (!Settings.AggressiveDash.Value && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
-                            return;
+                        // Try aggressive dash first if enabled
+                        if (Settings.AggressiveDash.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
+                            yield break;
+                        
+                        // Use enhanced terrain analysis for dash decision
+                        if (pathStatus == PathStatus.Dashable && ShouldDashToPosition(currentTask.WorldPosition.WorldToGrid()))
+                        {
+                            if (ExecuteDash(currentTask.WorldPosition))
+                                yield break;
+                        }
+                        
+                        // If path is blocked, skip this task
+                        if (pathStatus == PathStatus.Blocked)
+                        {
+                            _tasks.RemoveAt(0);
+                            yield break;
+                        }
                     }
 
-                    Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
-                    // Removed Thread.Sleep calls to prevent UI freezing
-                    Input.KeyDown(Settings.MovementKey);
-                    Input.KeyUp(Settings.MovementKey);
+                    // Check if PickItV2 is active before performing mouse actions
+                    if (!ExecuteMouseActionIfPossible(() =>
+                    {
+                        Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
+                        Input.KeyDown(Settings.MovementKey);
+                        Input.KeyUp(Settings.MovementKey);
+                    }))
+                    {
+                        // PickItV2 is active, yielding control
+                        yield break;
+                    }
 
                     //Within bounding range. Task is complete
                     //Note: Was getting stuck on close objects... testing hacky fix.
@@ -628,12 +856,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         //Pause for long enough for movement to hopefully be finished.
                         var targetInfo = questLoot.GetComponent<Targetable>();
                         if (!targetInfo.isTargeted)
-                            MouseoverItem(questLoot);
+                        {
+                            // Check if PickItV2 is active before mouse actions
+                            if (!ExecuteMouseActionIfPossible(() => MouseoverItem(questLoot)))
+                            {
+                                // PickItV2 is active, yielding control
+                                yield break;
+                            }
+                        }
                         if (targetInfo.isTargeted)
                         {
-                            // Removed Thread.Sleep calls to prevent UI freezing
-                            Mouse.LeftMouseDown();
-                            Mouse.LeftMouseUp();
+                            // Check if PickItV2 is active before clicking
+                            if (!ExecuteMouseActionIfPossible(() =>
+                            {
+                                Mouse.LeftMouseDown();
+                                Mouse.LeftMouseUp();
+                            }))
+                            {
+                                // PickItV2 is active, yielding control
+                                yield break;
+                            }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
                         }
 
@@ -647,23 +889,53 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         {
                             //Click the transition
                             Input.KeyUp(Settings.MovementKey);
-                            Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
+                            // Check if PickItV2 is active before clicking transition
+                            if (!ExecuteMouseActionIfPossible(() => Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100)))
+                            {
+                                // PickItV2 is active, yielding control
+                                yield break;
+                            }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
                         }
                         else
                         {
                             //Walk towards the transition
-                            // Try to dash if we're far enough away
-                            if (Settings.IsDashEnabled.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
+                            if (Settings.IsDashEnabled.Value)
                             {
-                                // Dash executed, no need to move
+                                var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
+                                
+                                // Try aggressive dash first if enabled
+                                if (Settings.AggressiveDash.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
+                                {
+                                    yield break;
+                                }
+                                // Use enhanced terrain analysis for dash decision
+                                else if (pathStatus == PathStatus.Dashable && ShouldDashToPosition(currentTask.WorldPosition.WorldToGrid()))
+                                {
+                                    if (ExecuteDash(currentTask.WorldPosition))
+                                        yield break;
+                                }
+                                // If path is blocked, try to find alternative route or skip
+                                else if (pathStatus == PathStatus.Blocked)
+                                {
+                                    currentTask.AttemptCount++;
+                                    if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
+                                        _tasks.RemoveAt(0);
+                                    yield break;
+                                }
                             }
-                            else
+                            
+                            // Normal movement if no dash executed
+                            // Check if PickItV2 is active before mouse movement
+                            if (!ExecuteMouseActionIfPossible(() =>
                             {
                                 Mouse.SetCursorPosHuman2(screenPos);
-                                // Removed Thread.Sleep calls to prevent UI freezing
                                 Input.KeyDown(Settings.MovementKey);
                                 Input.KeyUp(Settings.MovementKey);
+                            }))
+                            {
+                                // PickItV2 is active, yielding control
+                                yield break;
                             }
                         }
                         currentTask.AttemptCount++;
@@ -678,8 +950,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         {
                             var screenPos = WorldToValidScreenPosition(currentTask.WorldPosition);
                             Input.KeyUp(Settings.MovementKey);
-                            // Removed Thread.Sleep to prevent UI freezing
-                            Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
+                            // Check if PickItV2 is active before clicking waypoint
+                            if (!ExecuteMouseActionIfPossible(() => Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100)))
+                            {
+                                // PickItV2 is active, yielding control
+                                yield break;
+                            }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
                         }
                         currentTask.AttemptCount++;
@@ -688,6 +964,284 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         break;
                     }
             }
+        }
+    }
+    
+    /// <summary>
+    /// Enhanced terrain analysis that returns PathStatus instead of just boolean
+    /// </summary>
+    /// <param name="start">Starting position in grid coordinates</param>
+    /// <param name="end">Ending position in grid coordinates</param>
+    /// <returns>PathStatus indicating path quality</returns>
+    private PathStatus GetPathStatus(Vector2 start, Vector2 end)
+    {
+        // Validate terrain data exists
+        if (_tiles == null || _numCols <= 0 || _numRows <= 0)
+            return PathStatus.Invalid;
+            
+        // Check bounds
+        if (start.X < 0 || start.X >= _numCols || start.Y < 0 || start.Y >= _numRows ||
+            end.X < 0 || end.X >= _numCols || end.Y < 0 || end.Y >= _numRows)
+            return PathStatus.Invalid;
+            
+        // Use Bresenham's line algorithm to trace the path
+        var dx = Math.Abs(end.X - start.X);
+        var dy = Math.Abs(end.Y - start.Y);
+        var x = (int)start.X;
+        var y = (int)start.Y;
+        var n = 1 + dx + dy;
+        var x_inc = (end.X > start.X) ? 1 : -1;
+        var y_inc = (end.Y > start.Y) ? 1 : -1;
+        var error = dx - dy;
+        
+        dx *= 2;
+        dy *= 2;
+        
+        var hasDashableObstacle = false;
+        
+        for (; n > 0; --n)
+        {
+            // Check current position
+            if (x >= 0 && x < _numCols && y >= 0 && y < _numRows)
+            {
+                var terrainValue = _tiles[x, y];
+                
+                switch (terrainValue)
+                {
+                    case 255: // Impassable wall
+                        return PathStatus.Blocked;
+                    case 2: // Dashable terrain
+                        hasDashableObstacle = true;
+                        break;
+                    case 1: // Walkable terrain
+                        break;
+                    default: // Unknown terrain, assume blocked
+                        return PathStatus.Blocked;
+                }
+            }
+            
+            // Move to next position
+            if (error > 0)
+            {
+                x += x_inc;
+                error -= dy;
+            }
+            else
+            {
+                y += y_inc;
+                error += dx;
+            }
+        }
+        
+        // Return appropriate status
+        return hasDashableObstacle ? PathStatus.Dashable : PathStatus.Clear;
+    }
+    
+    /// <summary>
+    /// Checks if the leader's zone information is reliable for area transitions
+    /// </summary>
+    /// <returns>True if zone information is reliable</returns>
+    private bool IsLeaderZoneInfoReliable()
+    {
+        if (_followTarget == null)
+            return false;
+            
+        try
+        {
+            // Check if leader has valid position data
+            if (_followTarget.Pos == Vector3.Zero || _followTarget.Pos == null)
+                return false;
+                
+            // Check if leader is in a valid game state
+            var playerComponent = _followTarget.GetComponent<Player>();
+            if (playerComponent == null)
+                return false;
+                
+            // Check if we're in the same area
+            var currentArea = GameController.Area.CurrentArea;
+            if (currentArea == null)
+                return false;
+                
+            // Verify leader is in a reasonable position (not at origin)
+            var leaderPos = _followTarget.Pos;
+            if (Math.Abs(leaderPos.X) < 1.0f && Math.Abs(leaderPos.Y) < 1.0f)
+                return false;
+                
+            // Check if leader moved recently (indicates they're active)
+            var distanceFromLastPosition = Vector3.Distance(_followTarget.Pos, _lastTargetPosition);
+            if (_lastTargetPosition != Vector3.Zero && distanceFromLastPosition > 0.1f)
+                return true;
+                
+            // If leader hasn't moved much, check if they're still in a valid state
+            return _followTarget.IsValid && _followTarget.IsTargetable;
+        }
+        catch (Exception ex)
+        {
+            // If we can't verify leader zone info, assume it's unreliable
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// Enhanced dash terrain check using PathStatus
+    /// </summary>
+    /// <param name="targetPosition">Target position in grid coordinates</param>
+    /// <returns>True if dash should be executed</returns>
+    private bool ShouldDashToPosition(Vector2 targetPosition)
+    {
+        // Check if dash is available (cooldown)
+        if (!IsDashAvailable())
+            return false;
+            
+        var pathStatus = GetPathStatus(GameController.Player.GridPos, targetPosition);
+        
+        // Only dash if the path is dashable (has obstacles we can dash through)
+        return pathStatus == PathStatus.Dashable;
+    }
+    
+    /// <summary>
+    /// Refreshes terrain data to detect dynamic changes like doors opening/closing
+    /// </summary>
+    private void RefreshTerrainData()
+    {
+        try
+        {
+            // Check if it's time to refresh terrain
+            if (DateTime.Now - _lastTerrainRefresh < TimeSpan.FromMilliseconds(Settings.DebugTerrainRefreshRate.Value))
+                return;
+                
+            // Update terrain data from the game
+            var terrainData = GameController.Game.IngameState.Data.TerrainData;
+            if (terrainData == null)
+                return;
+                
+            _numRows = terrainData.NumRows;
+            _numCols = terrainData.NumCols;
+            _tiles = terrainData.Data;
+            
+            _lastTerrainRefresh = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            // If terrain refresh fails, wait longer before retrying
+            _lastTerrainRefresh = DateTime.Now.AddSeconds(5);
+        }
+    }
+    
+    /// <summary>
+    /// Debug method to visualize terrain values around the player
+    /// </summary>
+    private void RenderTerrainVisualization()
+    {
+        if (!Settings.ShowTerrainVisualization.Value || _tiles == null)
+            return;
+            
+        var playerGridPos = GameController.Player.GridPos;
+        var radius = 20; // Show terrain in a 40x40 grid around player
+        
+        for (int x = -radius; x <= radius; x++)
+        {
+            for (int y = -radius; y <= radius; y++)
+            {
+                var gridX = (int)playerGridPos.X + x;
+                var gridY = (int)playerGridPos.Y + y;
+                
+                // Check bounds
+                if (gridX < 0 || gridX >= _numCols || gridY < 0 || gridY >= _numRows)
+                    continue;
+                    
+                var terrainValue = _tiles[gridX, gridY];
+                var worldPos = new Vector3(gridX, gridY, 0);
+                var screenPos = WorldToValidScreenPosition(worldPos);
+                
+                // Skip if off screen
+                if (screenPos.X < 0 || screenPos.Y < 0 || screenPos.X > 1920 || screenPos.Y > 1080)
+                    continue;
+                
+                // Color based on terrain value
+                var color = terrainValue switch
+                {
+                    1 => SharpDX.Color.Green,      // Walkable
+                    2 => SharpDX.Color.Yellow,     // Dashable
+                    255 => SharpDX.Color.Red,      // Blocked
+                    _ => SharpDX.Color.Purple      // Unknown
+                };
+                
+                // Draw a small rectangle for each terrain cell
+                var rect = new SharpDX.RectangleF(screenPos.X - 1, screenPos.Y - 1, 2, 2);
+                Graphics.DrawBox(rect, color);
+                
+                // Optionally show the terrain value as text for debugging
+                if (Settings.ShowRaycastDebug.Value)
+                {
+                    Graphics.DrawText(terrainValue.ToString(), screenPos, SharpDX.Color.White, 8);
+                }
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Debug method to show detailed task information
+    /// </summary>
+    private void RenderTaskDebug()
+    {
+        if (!Settings.ShowTaskDebug.Value)
+            return;
+            
+        var yOffset = 340;
+        
+        Graphics.DrawText($"Tasks: {_tasks.Count}", new Vector2(10, yOffset), SharpDX.Color.White);
+        yOffset += 20;
+        
+        for (int i = 0; i < Math.Min(_tasks.Count, 10); i++)
+        {
+            var task = _tasks[i];
+            var taskText = $"  {i}: {task.Type} at ({task.WorldPosition.X:F0}, {task.WorldPosition.Y:F0}) - Attempts: {task.AttemptCount}";
+            var taskColor = i == 0 ? SharpDX.Color.Yellow : SharpDX.Color.Gray;
+            
+            Graphics.DrawText(taskText, new Vector2(10, yOffset), taskColor);
+            yOffset += 15;
+        }
+    }
+    
+    /// <summary>
+    /// Debug method to show entity information
+    /// </summary>
+    private void RenderEntityDebug()
+    {
+        if (!Settings.ShowEntityDebug.Value)
+            return;
+            
+        var yOffset = 400;
+        
+        // Show leader information
+        if (_followTarget != null)
+        {
+            var leaderText = $"Leader: {Settings.LeaderName.Value} at ({_followTarget.Pos.X:F0}, {_followTarget.Pos.Y:F0})";
+            Graphics.DrawText(leaderText, new Vector2(10, yOffset), SharpDX.Color.Green);
+            yOffset += 20;
+            
+            var distanceText = $"Distance: {Vector3.Distance(GameController.Player.Pos, _followTarget.Pos):F1}";
+            Graphics.DrawText(distanceText, new Vector2(10, yOffset), SharpDX.Color.White);
+            yOffset += 20;
+        }
+        else
+        {
+            Graphics.DrawText("Leader: NOT FOUND", new Vector2(10, yOffset), SharpDX.Color.Red);
+            yOffset += 20;
+        }
+        
+        // Show area transition information
+        Graphics.DrawText($"Area Transitions: {_areaTransitions.Count}", new Vector2(10, yOffset), SharpDX.Color.White);
+        yOffset += 20;
+        
+        var transitionCount = 0;
+        foreach (var transition in _areaTransitions.Values.Take(5))
+        {
+            var transText = $"  {transitionCount}: {transition.RenderName} at ({transition.Pos.X:F0}, {transition.Pos.Y:F0})";
+            Graphics.DrawText(transText, new Vector2(10, yOffset), SharpDX.Color.Cyan);
+            yOffset += 15;
+            transitionCount++;
         }
     }
 
@@ -812,12 +1366,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             Input.KeyDown(Settings.DashKey);
             Input.KeyUp(Settings.DashKey);
             
-            LogMessage($"Executed aggressive dash towards target (distance: {Vector3.Distance(GameController.Player.Pos, targetWorldPos):F0})", 5);
+            // Executed aggressive dash towards target
             return true;
         }
         catch (Exception ex)
         {
-            LogMessage($"ExecuteDash error: {ex.Message}", 1);
+            // ExecuteDash error occurred
             return false;
         }
     }
@@ -837,12 +1391,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         catch (InvalidOperationException ex)
         {
             // Collection was modified during enumeration
-            LogMessage($"GetFollowingTarget: Collection modified - {ex.Message}", 5);
             return null;
         }
         catch (Exception ex)
         {
-            LogMessage($"GetFollowingTarget: Unexpected error - {ex.Message}", 1);
+            // GetFollowingTarget: Unexpected error occurred
             return null;
         }
     }
@@ -867,12 +1420,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         catch (InvalidOperationException ex)
         {
             // Collection was modified during enumeration
-            LogMessage($"GetLootableQuestItem: Collection modified - {ex.Message}", 5);
             return null;
         }
         catch (Exception ex)
         {
-            LogMessage($"GetLootableQuestItem: Unexpected error - {ex.Message}", 1);
+            // GetLootableQuestItem: Unexpected error occurred
             return null;
         }
     }
@@ -975,12 +1527,78 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
         }
         
+        // Show coroutine status if monitoring is enabled
+        if (Settings.EnableCoroutineMonitoring.Value)
+        {
+            var followerStatus = _followerCoroutine?.Running == true ? "RUNNING" : "STOPPED";
+            var followerColor = _followerCoroutine?.Running == true ? SharpDX.Color.Green : SharpDX.Color.Red;
+            Graphics.DrawText($"Follower Coroutine: {followerStatus}", new Vector2(500, 220), followerColor);
+            
+            if (_postTransitionCoroutine != null)
+            {
+                var graceStatus = _postTransitionCoroutine.Running ? "ACTIVE" : "INACTIVE";
+                var graceColor = _postTransitionCoroutine.Running ? SharpDX.Color.Yellow : SharpDX.Color.Gray;
+                Graphics.DrawText($"Grace Period: {graceStatus}", new Vector2(500, 240), graceColor);
+            }
+            
+            if (_isTransitioning)
+            {
+                Graphics.DrawText("TRANSITIONING", new Vector2(500, 260), SharpDX.Color.Cyan);
+            }
+        }
+        
+        // Show PathStatus debug information
+        if (Settings.ShowPathStatusDebug.Value && _tasks.Count > 0)
+        {
+            var currentTask = _tasks.First();
+            var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
+            
+            var statusText = $"PathStatus: {pathStatus}";
+            var statusColor = pathStatus switch
+            {
+                PathStatus.Clear => SharpDX.Color.Green,
+                PathStatus.Dashable => SharpDX.Color.Yellow,
+                PathStatus.Blocked => SharpDX.Color.Red,
+                PathStatus.Invalid => SharpDX.Color.Purple,
+                _ => SharpDX.Color.White
+            };
+            
+            Graphics.DrawText(statusText, new Vector2(500, 280), statusColor);
+            
+            // Show recommended action
+            var actionText = pathStatus switch
+            {
+                PathStatus.Clear => "Action: Walk",
+                PathStatus.Dashable => "Action: Dash",
+                PathStatus.Blocked => "Action: Skip/Reroute",
+                PathStatus.Invalid => "Action: Invalid Path",
+                _ => "Action: Unknown"
+            };
+            
+            Graphics.DrawText(actionText, new Vector2(500, 300), statusColor);
+        }
+        
+        // Show zone reliability information
+        if (Settings.ShowPathStatusDebug.Value)
+        {
+            var zoneReliable = IsLeaderZoneInfoReliable();
+            var reliabilityText = $"Zone Reliable: {zoneReliable}";
+            var reliabilityColor = zoneReliable ? SharpDX.Color.Green : SharpDX.Color.Red;
+            
+            Graphics.DrawText(reliabilityText, new Vector2(500, 320), reliabilityColor);
+        }
+        
         var counter = 0;
         foreach (var transition in _areaTransitions)
         {
             counter++;
             Graphics.DrawText($"{transition.Key} at {transition.Value.Pos.X} {transition.Value.Pos.Y}", new Vector2(100, 120 + counter * 20));
         }
+        
+        // Render advanced debug visualizations
+        RenderTerrainVisualization();
+        RenderTaskDebug();
+        RenderEntityDebug();
     }
 
 
@@ -1000,5 +1618,14 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (result.Y > windowRect.BottomRight.Y) result.Y = windowRect.BottomRight.Y - edgeBounds;
         }
         return result;
+    }
+    
+    public override void OnClose()
+    {
+        // Stop all coroutines
+        _followerCoroutine?.Done();
+        _postTransitionCoroutine?.Done();
+        
+        base.OnClose();
     }
 }
