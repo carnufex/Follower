@@ -1536,7 +1536,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
             // Count occupied inventory slots
             var occupiedSlots = 0;
-            var totalSlots = inventory.TotalBoxesInInventoryRow * inventory.InventorySlotItemsCount;
+            var totalSlots = inventory.Rows * inventory.Columns;
             
             foreach (var item in inventory.InventorySlotItems)
             {
