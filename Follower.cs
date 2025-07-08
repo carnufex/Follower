@@ -357,45 +357,59 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     {
         while (true)
         {
+            var shouldContinue = false;
+            var waitTime = Settings.BotInputFrequency.Value;
+            
             try
             {
                 // Check if we should be running
                 if (!GameController.Player.IsAlive || !Settings.IsFollowEnabled.Value)
                 {
-                    yield return new WaitTime(100);
-                    continue;
+                    shouldContinue = true;
+                    waitTime = 100;
                 }
-
-                // Handle toggle follower
-                HandleToggleFollower();
-
-                // Check if we need to start post-transition grace period
-                if (_isTransitioning && _areaChangeTime != DateTime.MinValue)
+                else
                 {
-                    StartPostTransitionGracePeriod();
-                    _isTransitioning = false;
+                    // Handle toggle follower
+                    HandleToggleFollower();
+
+                    // Check if we need to start post-transition grace period
+                    if (_isTransitioning && _areaChangeTime != DateTime.MinValue)
+                    {
+                        StartPostTransitionGracePeriod();
+                        _isTransitioning = false;
+                    }
+
+                    // Cache the current follow target (if present)
+                    _followTarget = GetFollowingTarget();
+                    
+                    // Refresh terrain data for dynamic obstacle detection
+                    RefreshTerrainData();
+                    
+                    // Plan and execute tasks
+                    PlanTasks();
+                    
+                    _lastPlayerPosition = GameController.Player.Pos;
                 }
-
-                // Cache the current follow target (if present)
-                _followTarget = GetFollowingTarget();
-                
-                // Refresh terrain data for dynamic obstacle detection
-                RefreshTerrainData();
-                
-                // Plan and execute tasks
-                PlanTasks();
-                yield return ExecuteTasksCoroutine();
-
-                _lastPlayerPosition = GameController.Player.Pos;
-                
-                // Yield control for a short time
-                yield return new WaitTime(Settings.BotInputFrequency.Value);
             }
             catch (Exception ex)
             {
                 // Handle any errors gracefully
-                yield return new WaitTime(1000);
+                waitTime = 1000;
             }
+            
+            // Yield outside of try-catch
+            if (shouldContinue)
+            {
+                yield return new WaitTime(waitTime);
+                continue;
+            }
+            
+            // Execute tasks outside of try-catch
+            yield return ExecuteTasksCoroutine();
+            
+            // Yield control for a short time
+            yield return new WaitTime(waitTime);
         }
     }
     
@@ -791,7 +805,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 else
                 {
                     _lastPlayerPosition = GameController.Player.Pos;
-                    return;
+                    yield break;
                 }
             }
 
@@ -1110,14 +1124,48 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (DateTime.Now - _lastTerrainRefresh < TimeSpan.FromMilliseconds(Settings.DebugTerrainRefreshRate.Value))
                 return;
                 
-            // Update terrain data from the game
-            var terrainData = GameController.Game.IngameState.Data.TerrainData;
-            if (terrainData == null)
+            // Update terrain data from the game using the correct ExileCore API
+            var terrain = GameController.IngameState.Data.Terrain;
+            if (terrain == null)
                 return;
                 
-            _numRows = terrainData.NumRows;
-            _numCols = terrainData.NumCols;
-            _tiles = terrainData.Data;
+            // Process terrain data similar to AreaChange method
+            var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+            _numCols = (int)(terrain.NumCols - 1) * 23;
+            _numRows = (int)(terrain.NumRows - 1) * 23;
+            if ((_numCols & 1) > 0)
+                _numCols++;
+
+            _tiles = new byte[_numCols, _numRows];
+            int dataIndex = 0;
+            for (int y = 0; y < _numRows; y++)
+            {
+                for (int x = 0; x < _numCols; x += 2)
+                {
+                    var b = terrainBytes[dataIndex + (x >> 1)];
+                    _tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
+                    _tiles[x + 1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
+                }
+                dataIndex += terrain.BytesPerRow;
+            }
+
+            // Process ranged layer for dashable terrain
+            terrainBytes = GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+            dataIndex = 0;
+            for (int y = 0; y < _numRows; y++)
+            {
+                for (int x = 0; x < _numCols; x += 2)
+                {
+                    var b = terrainBytes[dataIndex + (x >> 1)];
+                    var current = _tiles[x, y];
+                    if (current == 255)
+                        _tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
+                    current = _tiles[x + 1, y];
+                    if (current == 255)
+                        _tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+                }
+                dataIndex += terrain.BytesPerRow;
+            }
             
             _lastTerrainRefresh = DateTime.Now;
         }
