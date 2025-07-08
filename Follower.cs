@@ -814,30 +814,27 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 case TaskNode.TaskNodeType.Movement:
                     _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency + random.Next(Settings.BotInputFrequency));
 
-                    // Enhanced pathfinding with PathStatus
+                    // Enhanced dashing with pathfinding (but don't block normal movement)
                     if (Settings.IsDashEnabled.Value)
                     {
-                        var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
-                        
                         // Try aggressive dash first if enabled
                         if (Settings.AggressiveDash.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
                             yield break;
                         
-                        // Use enhanced terrain analysis for dash decision
+                        // Use enhanced terrain analysis for dash decision only
+                        var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
                         if (pathStatus == PathStatus.Dashable && ShouldDashToPosition(currentTask.WorldPosition.WorldToGrid()))
                         {
                             if (ExecuteDash(currentTask.WorldPosition))
                                 yield break;
                         }
                         
-                        // If path is blocked, skip this task
-                        if (pathStatus == PathStatus.Blocked)
-                        {
-                            _tasks.RemoveAt(0);
-                            yield break;
-                        }
+                        // Note: We removed the PathStatus.Blocked check that was preventing normal movement
+                        // The character should always attempt to move, even if there are obstacles,
+                        // because the game's pathfinding can navigate around them
                     }
 
+                    // Always attempt normal movement (this was the original working logic)
                     // Check if PickItV2 is active before performing mouse actions
                     if (!ExecuteMouseActionIfPossible(() =>
                     {
@@ -916,27 +913,21 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                             //Walk towards the transition
                             if (Settings.IsDashEnabled.Value)
                             {
-                                var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
-                                
                                 // Try aggressive dash first if enabled
                                 if (Settings.AggressiveDash.Value && TryAggressiveDash(currentTask.WorldPosition, taskDistance))
                                 {
                                     yield break;
                                 }
-                                // Use enhanced terrain analysis for dash decision
-                                else if (pathStatus == PathStatus.Dashable && ShouldDashToPosition(currentTask.WorldPosition.WorldToGrid()))
+                                // Use enhanced terrain analysis for dash decision only
+                                var pathStatus = GetPathStatus(GameController.Player.GridPos, currentTask.WorldPosition.WorldToGrid());
+                                if (pathStatus == PathStatus.Dashable && ShouldDashToPosition(currentTask.WorldPosition.WorldToGrid()))
                                 {
                                     if (ExecuteDash(currentTask.WorldPosition))
                                         yield break;
                                 }
-                                // If path is blocked, try to find alternative route or skip
-                                else if (pathStatus == PathStatus.Blocked)
-                                {
-                                    currentTask.AttemptCount++;
-                                    if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
-                                        _tasks.RemoveAt(0);
-                                    yield break;
-                                }
+                                
+                                // Note: Removed PathStatus.Blocked check - always attempt normal movement
+                                // Let the game's pathfinding handle obstacles
                             }
                             
                             // Normal movement if no dash executed
