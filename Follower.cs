@@ -1126,8 +1126,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
             // Update terrain data from the game using the correct ExileCore API
             var terrain = GameController.IngameState.Data.Terrain;
-            if (terrain == null)
-                return;
                 
             // Process terrain data similar to AreaChange method
             var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
