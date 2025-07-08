@@ -67,6 +67,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private int _numRows, _numCols;
     private byte[,] _tiles;
     private DateTime _lastTerrainRefresh = DateTime.MinValue;
+    
+    // Stuck detection variables
+    private Vector3 _lastStuckCheckPosition = Vector3.Zero;
+    private DateTime _lastStuckCheckTime = DateTime.MinValue;
+    private DateTime _stuckDetectionStartTime = DateTime.MinValue;
+    private bool _isStuckDetectionActive = false;
+    private int _stuckRecoveryAttempts = 0;
 
     public override bool Initialise()
     {
@@ -113,6 +120,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         // Reset terrain refresh timer
         _lastTerrainRefresh = DateTime.MinValue;
+        
+        // Reset stuck detection
+        _lastStuckCheckPosition = Vector3.Zero;
+        _lastStuckCheckTime = DateTime.MinValue;
+        _stuckDetectionStartTime = DateTime.MinValue;
+        _isStuckDetectionActive = false;
+        _stuckRecoveryAttempts = 0;
     }
 
     public override void AreaChange(AreaInstance area)
@@ -385,6 +399,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     
                     // Refresh terrain data for dynamic obstacle detection
                     RefreshTerrainData();
+                    
+                    // Check for stuck detection and recovery
+                    CheckStuckDetection();
                     
                     // Plan and execute tasks
                     PlanTasks();
@@ -1105,6 +1122,130 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
+    /// Checks if the player is stuck and attempts recovery
+    /// </summary>
+    private void CheckStuckDetection()
+    {
+        if (!Settings.EnableStuckDetection.Value || !Settings.IsFollowEnabled.Value || _tasks.Count == 0)
+        {
+            // Reset stuck detection when not needed
+            _isStuckDetectionActive = false;
+            _stuckDetectionStartTime = DateTime.MinValue;
+            _stuckRecoveryAttempts = 0;
+            return;
+        }
+        
+        var currentPos = GameController.Player.Pos;
+        var now = DateTime.Now;
+        
+        // Initialize stuck detection on first check
+        if (_lastStuckCheckTime == DateTime.MinValue)
+        {
+            _lastStuckCheckPosition = currentPos;
+            _lastStuckCheckTime = now;
+            return;
+        }
+        
+        // Check if enough time has passed for stuck detection
+        if (now - _lastStuckCheckTime < TimeSpan.FromMilliseconds(1000))
+            return;
+            
+        // Calculate movement since last check
+        var movementDistance = Vector3.Distance(currentPos, _lastStuckCheckPosition);
+        
+        // Check if we've moved enough to not be considered stuck
+        if (movementDistance >= Settings.StuckMovementThreshold.Value)
+        {
+            // We're moving, reset stuck detection
+            _isStuckDetectionActive = false;
+            _stuckDetectionStartTime = DateTime.MinValue;
+            _stuckRecoveryAttempts = 0;
+            
+            _lastStuckCheckPosition = currentPos;
+            _lastStuckCheckTime = now;
+            return;
+        }
+        
+        // We haven't moved enough, check if we should start/continue stuck detection
+        if (!_isStuckDetectionActive)
+        {
+            // Start stuck detection
+            _isStuckDetectionActive = true;
+            _stuckDetectionStartTime = now;
+        }
+        else
+        {
+            // Check if we've been stuck long enough to trigger recovery
+            var stuckDuration = now - _stuckDetectionStartTime;
+            if (stuckDuration.TotalMilliseconds >= Settings.StuckDetectionTime.Value)
+            {
+                // We're stuck! Attempt recovery
+                AttemptStuckRecovery();
+            }
+        }
+        
+        _lastStuckCheckPosition = currentPos;
+        _lastStuckCheckTime = now;
+    }
+    
+    /// <summary>
+    /// Attempts to recover from being stuck
+    /// </summary>
+    private void AttemptStuckRecovery()
+    {
+        if (_stuckRecoveryAttempts >= Settings.MaxStuckRecoveryAttempts.Value)
+        {
+            // Max recovery attempts reached, skip current task
+            if (_tasks.Count > 0)
+            {
+                _tasks.RemoveAt(0);
+                _stuckRecoveryAttempts = 0;
+                _isStuckDetectionActive = false;
+                _stuckDetectionStartTime = DateTime.MinValue;
+                // Skipped stuck task after max recovery attempts
+            }
+            return;
+        }
+        
+        _stuckRecoveryAttempts++;
+        var currentPos = GameController.Player.Pos;
+        
+        // Recovery Strategy 1: Try aggressive dash if available
+        if (Settings.IsDashEnabled.Value && _tasks.Count > 0)
+        {
+            var targetPos = _tasks.First().WorldPosition;
+            var distance = Vector3.Distance(currentPos, targetPos);
+            
+            if (distance > Settings.DashDistanceThreshold.Value && IsDashAvailable())
+            {
+                // Attempting stuck recovery with dash
+                ExecuteDash(targetPos);
+                
+                // Reset stuck detection timer to give dash time to work
+                _stuckDetectionStartTime = DateTime.Now;
+                return;
+            }
+        }
+        
+        // Recovery Strategy 2: Generate random nearby movement
+        var randomOffset = new Vector3(
+            (float)(random.NextDouble() - 0.5) * 200,
+            (float)(random.NextDouble() - 0.5) * 200,
+            currentPos.Z
+        );
+        
+        var recoveryPos = currentPos + randomOffset;
+        
+        // Insert recovery movement at the beginning of task queue
+        _tasks.Insert(0, new TaskNode(recoveryPos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Movement));
+        
+        // Reset stuck detection timer to give recovery time to work
+        _stuckDetectionStartTime = DateTime.Now;
+        
+        // Attempting stuck recovery with random movement
+    }
+    
+    /// <summary>
     /// Refreshes terrain data to detect dynamic changes like doors opening/closing
     /// </summary>
     private void RefreshTerrainData()
@@ -1526,6 +1667,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var targetDist = _lastTargetPosition == null ? "NA" : Vector3.Distance(GameController.Player.Pos, _lastTargetPosition).ToString();
         Graphics.DrawText($"Follow Enabled: {Settings.IsFollowEnabled.Value}", new Vector2(500, 120));
         Graphics.DrawText($"Task Count: {_tasks.Count} Next WP Distance: {dist} Target Distance: {targetDist}", new Vector2(500, 140));
+        
+        // Show stuck detection status
+        if (Settings.EnableStuckDetection.Value && _isStuckDetectionActive)
+        {
+            var stuckDuration = DateTime.Now - _stuckDetectionStartTime;
+            var stuckColor = _stuckRecoveryAttempts > 0 ? SharpDX.Color.Red : SharpDX.Color.Yellow;
+            Graphics.DrawText($"STUCK DETECTED! Duration: {stuckDuration.TotalSeconds:F1}s | Attempts: {_stuckRecoveryAttempts}", 
+                new Vector2(500, 160), stuckColor);
+        }
         
         // Show teleport search status
         if (_isSearchingForTeleport)
