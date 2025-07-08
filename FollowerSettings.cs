@@ -60,6 +60,30 @@ public class FollowerSettings : ISettings
     [Menu("Stuck Movement Threshold")] public RangeNode<int> StuckMovementThreshold { get; set; } = new RangeNode<int>(50, 10, 200);
     [Menu("Max Stuck Recovery Attempts")] public RangeNode<int> MaxStuckRecoveryAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
     
+    // Death & Resurrection Settings
+    [Menu("Enable Death Handling")] public ToggleNode EnableDeathHandling { get; set; } = new ToggleNode(true);
+    [Menu("Auto Resume After Death")] public ToggleNode AutoResumeAfterDeath { get; set; } = new ToggleNode(true);
+    [Menu("Death Detection Check Interval (ms)")] public RangeNode<int> DeathCheckInterval { get; set; } = new RangeNode<int>(1000, 500, 5000);
+    [Menu("Resurrection Wait Timeout (ms)")] public RangeNode<int> ResurrectionTimeout { get; set; } = new RangeNode<int>(30000, 10000, 120000);
+    
+    // Multiple Leader Settings
+    [Menu("Enable Multiple Leaders")] public ToggleNode EnableMultipleLeaders { get; set; } = new ToggleNode(false);
+    [Menu("Leader Names (comma separated)")] public TextNode LeaderNames { get; set; } = new TextNode("");
+    [Menu("Leader Switch Distance")] public RangeNode<int> LeaderSwitchDistance { get; set; } = new RangeNode<int>(2000, 500, 5000);
+    [Menu("Prioritize Closest Leader")] public ToggleNode PrioritizeClosestLeader { get; set; } = new ToggleNode(true);
+    
+    // Safety Features
+    [Menu("Enable Safety Features")] public ToggleNode EnableSafetyFeatures { get; set; } = new ToggleNode(true);
+    [Menu("Pause on Logout Screen")] public ToggleNode PauseOnLogout { get; set; } = new ToggleNode(true);
+    [Menu("Pause on Character Select")] public ToggleNode PauseOnCharacterSelect { get; set; } = new ToggleNode(true);
+    [Menu("Auto Resume on Game Return")] public ToggleNode AutoResumeOnGameReturn { get; set; } = new ToggleNode(true);
+    
+    // Inventory Management Settings
+    [Menu("Enable Inventory Management")] public ToggleNode EnableInventoryManagement { get; set; } = new ToggleNode(false);
+    [Menu("Auto Portal on Full Inventory")] public ToggleNode AutoPortalOnFullInventory { get; set; } = new ToggleNode(true);
+    [Menu("Inventory Full Threshold")] public RangeNode<int> InventoryFullThreshold { get; set; } = new RangeNode<int>(55, 40, 60);
+    [Menu("Portal Wait Time (ms)")] public RangeNode<int> PortalWaitTime { get; set; } = new RangeNode<int>(5000, 2000, 15000);
+    
     // Debug Settings
     [Menu("Show PathStatus Debug")] public ToggleNode ShowPathStatusDebug { get; set; } = new ToggleNode(false);
     [Menu("Show Terrain Visualization")] public ToggleNode ShowTerrainVisualization { get; set; } = new ToggleNode(false);

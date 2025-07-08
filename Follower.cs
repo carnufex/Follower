@@ -74,6 +74,27 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private DateTime _stuckDetectionStartTime = DateTime.MinValue;
     private bool _isStuckDetectionActive = false;
     private int _stuckRecoveryAttempts = 0;
+    
+    // Death handling variables
+    private bool _wasDead = false;
+    private DateTime _deathDetectedTime = DateTime.MinValue;
+    private DateTime _lastDeathCheckTime = DateTime.MinValue;
+    private bool _isWaitingForResurrection = false;
+    
+    // Multiple leader variables
+    private List<string> _leaderNamesList = new List<string>();
+    private Entity _previousLeader = null;
+    private DateTime _lastLeaderSwitchTime = DateTime.MinValue;
+    
+    // Safety feature variables
+    private bool _wasInGame = true;
+    private DateTime _lastSafetyCheckTime = DateTime.MinValue;
+    private bool _isPausedForSafety = false;
+    
+    // Inventory management variables
+    private DateTime _lastInventoryCheckTime = DateTime.MinValue;
+    private bool _isManagingInventory = false;
+    private DateTime _portalUsedTime = DateTime.MinValue;
 
     public override bool Initialise()
     {
@@ -127,6 +148,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _stuckDetectionStartTime = DateTime.MinValue;
         _isStuckDetectionActive = false;
         _stuckRecoveryAttempts = 0;
+        
+        // Reset death handling
+        _wasDead = false;
+        _deathDetectedTime = DateTime.MinValue;
+        _lastDeathCheckTime = DateTime.MinValue;
+        _isWaitingForResurrection = false;
+        
+        // Reset multiple leader tracking
+        _previousLeader = null;
+        _lastLeaderSwitchTime = DateTime.MinValue;
+        
+        // Reset safety features
+        _wasInGame = true;
+        _lastSafetyCheckTime = DateTime.MinValue;
+        _isPausedForSafety = false;
+        
+        // Reset inventory management
+        _lastInventoryCheckTime = DateTime.MinValue;
+        _isManagingInventory = false;
+        _portalUsedTime = DateTime.MinValue;
     }
 
     public override void AreaChange(AreaInstance area)
@@ -376,8 +417,14 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             try
             {
-                // Check if we should be running
-                if (!GameController.Player.IsAlive || !Settings.IsFollowEnabled.Value)
+                // Check death handling first
+                CheckDeathHandling();
+                
+                // Check safety features
+                CheckSafetyFeatures();
+                
+                // Check if we should be running (includes death and safety checks)
+                if (!GameController.Player.IsAlive || !Settings.IsFollowEnabled.Value || _isWaitingForResurrection || _isPausedForSafety)
                 {
                     shouldContinue = true;
                     waitTime = 100;
@@ -394,8 +441,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         _isTransitioning = false;
                     }
 
-                    // Cache the current follow target (if present)
-                    _followTarget = GetFollowingTarget();
+                    // Cache the current follow target (using multiple leader support)
+                    _followTarget = GetBestAvailableLeader();
+                    
+                    // Check inventory management
+                    CheckInventoryManagement();
                     
                     // Refresh terrain data for dynamic obstacle detection
                     RefreshTerrainData();
@@ -1246,6 +1296,316 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
+    /// Handles death detection and resurrection logic
+    /// </summary>
+    private void CheckDeathHandling()
+    {
+        if (!Settings.EnableDeathHandling.Value)
+            return;
+            
+        var now = DateTime.Now;
+        
+        // Check if enough time has passed since last death check
+        if (now - _lastDeathCheckTime < TimeSpan.FromMilliseconds(Settings.DeathCheckInterval.Value))
+            return;
+            
+        _lastDeathCheckTime = now;
+        
+        var isCurrentlyDead = !GameController.Player.IsAlive;
+        
+        // Death detected
+        if (isCurrentlyDead && !_wasDead)
+        {
+            _wasDead = true;
+            _deathDetectedTime = now;
+            _isWaitingForResurrection = true;
+            
+            // Clear all current tasks when dead
+            _tasks.Clear();
+            
+            // Player died - waiting for resurrection
+        }
+        // Resurrection detected
+        else if (!isCurrentlyDead && _wasDead)
+        {
+            _wasDead = false;
+            _isWaitingForResurrection = false;
+            
+            if (Settings.AutoResumeAfterDeath.Value)
+            {
+                // Reset tracking state to re-acquire leader
+                ResetFollowerTracking();
+                
+                // Player resurrected - auto-resuming following
+            }
+        }
+        // Check for resurrection timeout
+        else if (_isWaitingForResurrection && isCurrentlyDead)
+        {
+            var waitTime = now - _deathDetectedTime;
+            if (waitTime.TotalMilliseconds > Settings.ResurrectionTimeout.Value)
+            {
+                // Resurrection timeout reached - stopping death handling
+                _isWaitingForResurrection = false;
+                _wasDead = false;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Parses leader names and finds the best available leader
+    /// </summary>
+    private Entity GetBestAvailableLeader()
+    {
+        // Use single leader mode if multiple leaders is disabled
+        if (!Settings.EnableMultipleLeaders.Value)
+        {
+            return GetFollowingTarget(); // Original single leader method
+        }
+        
+        // Parse leader names from comma-separated string
+        var leaderNamesString = Settings.LeaderNames.Value?.Trim();
+        if (string.IsNullOrEmpty(leaderNamesString))
+        {
+            // Fall back to single leader if no multiple leaders specified
+            return GetFollowingTarget();
+        }
+        
+        // Update leader names list if it changed
+        var newLeaderNames = leaderNamesString.Split(',')
+            .Select(name => name.Trim().ToLower())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
+            
+        if (!_leaderNamesList.SequenceEqual(newLeaderNames))
+        {
+            _leaderNamesList = newLeaderNames;
+        }
+        
+        if (_leaderNamesList.Count == 0)
+        {
+            return GetFollowingTarget(); // Fall back to single leader
+        }
+        
+        try
+        {
+            // Get all potential leaders
+            var potentialLeaders = GameController.Entities
+                .Where(x => x.Type == ExileCore.Shared.Enums.EntityType.Player)
+                .Where(x => x.GetComponent<Player>()?.PlayerName != null)
+                .Where(x => _leaderNamesList.Contains(x.GetComponent<Player>().PlayerName.ToLower()))
+                .ToList();
+                
+            if (potentialLeaders.Count == 0)
+                return null;
+                
+            // If we have a current leader and they're still available, prefer them (unless switching conditions are met)
+            if (_followTarget != null && potentialLeaders.Any(p => p.Id == _followTarget.Id))
+            {
+                var currentLeaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+                
+                // Only switch if current leader is too far and we haven't switched recently
+                if (currentLeaderDistance > Settings.LeaderSwitchDistance.Value &&
+                    DateTime.Now - _lastLeaderSwitchTime > TimeSpan.FromMilliseconds(5000))
+                {
+                    // Continue to find better leader
+                }
+                else
+                {
+                    return _followTarget; // Keep current leader
+                }
+            }
+            
+            // Find the best leader based on settings
+            Entity bestLeader = null;
+            
+            if (Settings.PrioritizeClosestLeader.Value)
+            {
+                // Find closest leader
+                bestLeader = potentialLeaders
+                    .OrderBy(leader => Vector3.Distance(GameController.Player.Pos, leader.Pos))
+                    .FirstOrDefault();
+            }
+            else
+            {
+                // Use priority order (first in list has highest priority)
+                foreach (var leaderName in _leaderNamesList)
+                {
+                    bestLeader = potentialLeaders
+                        .FirstOrDefault(x => x.GetComponent<Player>().PlayerName.ToLower() == leaderName);
+                    if (bestLeader != null)
+                        break;
+                }
+            }
+            
+            // Check if we're switching leaders
+            if (bestLeader != null && (_followTarget == null || bestLeader.Id != _followTarget.Id))
+            {
+                _lastLeaderSwitchTime = DateTime.Now;
+                var leaderName = bestLeader.GetComponent<Player>().PlayerName;
+                // Switched to leader
+            }
+            
+            return bestLeader;
+        }
+        catch (Exception ex)
+        {
+            // Error in GetBestAvailableLeader
+            return GetFollowingTarget(); // Fall back to single leader
+        }
+    }
+    
+    /// <summary>
+    /// Checks game state for safety features
+    /// </summary>
+    private void CheckSafetyFeatures()
+    {
+        if (!Settings.EnableSafetyFeatures.Value)
+            return;
+            
+        var now = DateTime.Now;
+        
+        // Check if enough time has passed since last safety check
+        if (now - _lastSafetyCheckTime < TimeSpan.FromMilliseconds(1000))
+            return;
+            
+        _lastSafetyCheckTime = now;
+        
+        try
+        {
+            // Check if we're in the game
+            var isInGame = GameController.Game.IngameState?.ServerData?.IsInGame == true;
+            
+            // Detect game state changes
+            if (_wasInGame && !isInGame)
+            {
+                // Left the game (logout, character select, etc.)
+                if ((Settings.PauseOnLogout.Value || Settings.PauseOnCharacterSelect.Value) && !_isPausedForSafety)
+                {
+                    _isPausedForSafety = true;
+                    _tasks.Clear(); // Clear current tasks
+                    
+                    // Paused following due to leaving game
+                }
+            }
+            else if (!_wasInGame && isInGame)
+            {
+                // Returned to the game
+                if (Settings.AutoResumeOnGameReturn.Value && _isPausedForSafety)
+                {
+                    _isPausedForSafety = false;
+                    ResetFollowerTracking(); // Reset tracking to re-acquire leader
+                    
+                    // Resumed following after returning to game
+                }
+            }
+            
+            _wasInGame = isInGame;
+        }
+        catch (Exception ex)
+        {
+            // Error in CheckSafetyFeatures
+        }
+    }
+    
+    /// <summary>
+    /// Checks inventory and handles auto-portal when full
+    /// </summary>
+    private void CheckInventoryManagement()
+    {
+        if (!Settings.EnableInventoryManagement.Value)
+            return;
+            
+        var now = DateTime.Now;
+        
+        // Check if enough time has passed since last inventory check
+        if (now - _lastInventoryCheckTime < TimeSpan.FromMilliseconds(2000))
+            return;
+            
+        _lastInventoryCheckTime = now;
+        
+        // Don't manage inventory if we're already managing it or recently used portal
+        if (_isManagingInventory || (now - _portalUsedTime).TotalMilliseconds < Settings.PortalWaitTime.Value)
+            return;
+            
+        try
+        {
+            var inventory = GameController.Game.IngameState?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
+            if (inventory == null)
+                return;
+                
+            // Count occupied inventory slots
+            var occupiedSlots = 0;
+            var totalSlots = inventory.TotalBoxesInInventoryRow * inventory.InventorySlotItemsCount;
+            
+            foreach (var item in inventory.InventorySlotItems)
+            {
+                if (item != null)
+                    occupiedSlots++;
+            }
+            
+            // Check if inventory is full enough to trigger portal
+            var occupancyPercentage = (occupiedSlots * 100) / totalSlots;
+            
+            if (occupancyPercentage >= Settings.InventoryFullThreshold.Value && Settings.AutoPortalOnFullInventory.Value)
+            {
+                _isManagingInventory = true;
+                
+                // Try to use a portal scroll
+                var portalScrollUsed = UsePortalScroll();
+                if (portalScrollUsed)
+                {
+                    _portalUsedTime = now;
+                    _tasks.Clear(); // Clear current tasks
+                    
+                    // Used portal scroll due to full inventory
+                }
+                
+                _isManagingInventory = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Error in CheckInventoryManagement
+            _isManagingInventory = false;
+        }
+    }
+    
+    /// <summary>
+    /// Attempts to use a portal scroll
+    /// </summary>
+    private bool UsePortalScroll()
+    {
+        try
+        {
+            var inventory = GameController.Game.IngameState?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
+            if (inventory == null)
+                return false;
+                
+            // Look for portal scroll in inventory
+            foreach (var item in inventory.InventorySlotItems)
+            {
+                if (item?.Item?.RenderName?.Contains("Portal") == true)
+                {
+                    // Found portal scroll, try to use it
+                    var itemPos = item.GetClientRect().Center;
+                    Mouse.SetCursorPos(itemPos);
+                    System.Threading.Thread.Sleep(100);
+                    Mouse.RightClick(50);
+                    
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        catch (Exception ex)
+        {
+            return false;
+        }
+    }
+    
+    /// <summary>
     /// Refreshes terrain data to detect dynamic changes like doors opening/closing
     /// </summary>
     private void RefreshTerrainData()
@@ -1675,6 +2035,36 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             var stuckColor = _stuckRecoveryAttempts > 0 ? SharpDX.Color.Red : SharpDX.Color.Yellow;
             Graphics.DrawText($"STUCK DETECTED! Duration: {stuckDuration.TotalSeconds:F1}s | Attempts: {_stuckRecoveryAttempts}", 
                 new Vector2(500, 160), stuckColor);
+        }
+        
+        // Show death handling status
+        if (Settings.EnableDeathHandling.Value && _isWaitingForResurrection)
+        {
+            var deathDuration = DateTime.Now - _deathDetectedTime;
+            Graphics.DrawText($"WAITING FOR RESURRECTION: {deathDuration.TotalSeconds:F1}s", 
+                new Vector2(500, 180), SharpDX.Color.Purple);
+        }
+        
+        // Show safety features status
+        if (Settings.EnableSafetyFeatures.Value && _isPausedForSafety)
+        {
+            Graphics.DrawText("PAUSED FOR SAFETY (Outside Game)", 
+                new Vector2(500, 200), SharpDX.Color.Orange);
+        }
+        
+        // Show inventory management status
+        if (Settings.EnableInventoryManagement.Value && _isManagingInventory)
+        {
+            Graphics.DrawText("MANAGING INVENTORY", 
+                new Vector2(500, 220), SharpDX.Color.Cyan);
+        }
+        
+        // Show multiple leader status
+        if (Settings.EnableMultipleLeaders.Value && _followTarget != null)
+        {
+            var leaderName = _followTarget.GetComponent<Player>()?.PlayerName ?? "Unknown";
+            Graphics.DrawText($"Following: {leaderName} (Multi-Leader Mode)", 
+                new Vector2(500, 240), SharpDX.Color.LightGreen);
         }
         
         // Show teleport search status
