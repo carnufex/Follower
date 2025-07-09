@@ -417,6 +417,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             try
             {
+                // Handle toggle follower BEFORE checking if following is enabled
+                // This allows the toggle to work both ways
+                HandleToggleFollower();
+                
                 // Check death handling first
                 CheckDeathHandling();
                 
@@ -431,9 +435,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 }
                 else
                 {
-                    // Handle toggle follower
-                    HandleToggleFollower();
-
                     // Check if we need to start post-transition grace period
                     if (_isTransitioning && _areaChangeTime != DateTime.MinValue)
                     {
@@ -580,6 +581,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private void HandleDistantLeader()
     {
+        // Clear stuck detection when planning new distant follow tasks
+        // This prevents stuck detection from interfering with valid following
+        if (_isStuckDetectionActive)
+        {
+            _isStuckDetectionActive = false;
+            _stuckDetectionStartTime = DateTime.MinValue;
+            _stuckRecoveryAttempts = 0;
+        }
+        
         // Leader moved VERY far in one frame. Check for transition to use to follow them.
         var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
         if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
@@ -856,7 +866,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
      private IEnumerator ExecuteTasksCoroutine()
      {
          // We have our tasks, now we need to perform in game logic with them.
-         if (DateTime.Now > _nextBotAction && _tasks.Count > 0)
+         // Allow immediate execution if we're stuck to improve responsiveness
+         bool canExecuteImmediately = _isStuckDetectionActive && _stuckRecoveryAttempts > 0;
+         
+         if ((DateTime.Now > _nextBotAction || canExecuteImmediately) && _tasks.Count > 0)
          {
             var currentTask = _tasks.First();
             var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
@@ -914,10 +927,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         yield break;
                     }
 
-                    //Within bounding range. Task is complete
-                    //Note: Was getting stuck on close objects... testing hacky fix.
+                    // Check if we've reached the target (within bounding range)
                     if (taskDistance <= Settings.PathfindingNodeDistance.Value * 1.5)
+                    {
                         _tasks.RemoveAt(0);
+                    }
+                    else
+                    {
+                        currentTask.AttemptCount++;
+                        if (currentTask.AttemptCount > Settings.MaxTaskAttempts)
+                            _tasks.RemoveAt(0);
+                    }
                     break;
                 case TaskNode.TaskNodeType.Loot:
                     {
@@ -1188,6 +1208,22 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var currentPos = GameController.Player.Pos;
         var now = DateTime.Now;
         
+        // Check if leader is nearby - if so, reset stuck detection more aggressively
+        if (_followTarget != null)
+        {
+            var leaderDistance = Vector3.Distance(currentPos, _followTarget.Pos);
+            if (leaderDistance <= Settings.NormalFollowDistance.Value && _isStuckDetectionActive)
+            {
+                // Leader is close, reset stuck detection to give normal following a chance
+                _isStuckDetectionActive = false;
+                _stuckDetectionStartTime = DateTime.MinValue;
+                _stuckRecoveryAttempts = 0;
+                _lastStuckCheckPosition = currentPos;
+                _lastStuckCheckTime = now;
+                return;
+            }
+        }
+        
         // Initialize stuck detection on first check
         if (_lastStuckCheckTime == DateTime.MinValue)
         {
@@ -1288,6 +1324,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         // Insert recovery movement at the beginning of task queue
         _tasks.Insert(0, new TaskNode(recoveryPos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Movement));
+        
+        // IMMEDIATELY move mouse to recovery position and force execution
+        // This ensures the mouse adjusts right away when stuck
+        if (ExecuteMouseActionIfPossible(() =>
+        {
+            Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(recoveryPos));
+            Input.KeyDown(Settings.MovementKey);
+            Input.KeyUp(Settings.MovementKey);
+        }))
+        {
+            // Force immediate execution by resetting the action timer
+            _nextBotAction = DateTime.Now;
+        }
         
         // Reset stuck detection timer to give recovery time to work
         _stuckDetectionStartTime = DateTime.Now;
