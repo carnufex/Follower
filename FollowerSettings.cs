@@ -59,6 +59,10 @@ public class FollowerSettings : ISettings
     [Menu("Stuck Detection Time (ms)")] public RangeNode<int> StuckDetectionTime { get; set; } = new RangeNode<int>(3000, 1000, 10000);
     [Menu("Stuck Movement Threshold")] public RangeNode<int> StuckMovementThreshold { get; set; } = new RangeNode<int>(50, 10, 200);
     [Menu("Max Stuck Recovery Attempts")] public RangeNode<int> MaxStuckRecoveryAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
+    [Menu("Aggressive Stuck Detection")] public ToggleNode AggressiveStuckDetection { get; set; } = new ToggleNode(true);
+    [Menu("Unreachable Position Detection")] public ToggleNode UnreachablePositionDetection { get; set; } = new ToggleNode(true);
+    [Menu("Max Same Position Attempts")] public RangeNode<int> MaxSamePositionAttempts { get; set; } = new RangeNode<int>(5, 2, 15);
+    [Menu("Position Similarity Threshold")] public RangeNode<int> PositionSimilarityThreshold { get; set; } = new RangeNode<int>(100, 50, 300);
     
     // Death & Resurrection Settings
     [Menu("Enable Death Handling")] public ToggleNode EnableDeathHandling { get; set; } = new ToggleNode(true);
@@ -90,4 +94,8 @@ public class FollowerSettings : ISettings
     [Menu("Show Task Debug")] public ToggleNode ShowTaskDebug { get; set; } = new ToggleNode(false);
     [Menu("Show Entity Debug")] public ToggleNode ShowEntityDebug { get; set; } = new ToggleNode(false);
     [Menu("Show Raycast Debug")] public ToggleNode ShowRaycastDebug { get; set; } = new ToggleNode(false);
+    
+    // Mouse Movement Settings
+    [Menu("Mouse Movement Area (% from center)")] public RangeNode<int> MouseMovementAreaPercent { get; set; } = new RangeNode<int>(75, 50, 100);
+    [Menu("Force Click During Movement")] public ToggleNode ForceClickDuringMovement { get; set; } = new ToggleNode(true);
 }

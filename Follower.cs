@@ -75,6 +75,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private bool _isStuckDetectionActive = false;
     private int _stuckRecoveryAttempts = 0;
     
+    // Unreachable position detection variables
+    private Dictionary<Vector3, int> _positionAttempts = new Dictionary<Vector3, int>();
+    private Vector3 _lastAttemptedPosition = Vector3.Zero;
+    
     // Death handling variables
     private bool _wasDead = false;
     private DateTime _deathDetectedTime = DateTime.MinValue;
@@ -148,6 +152,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _stuckDetectionStartTime = DateTime.MinValue;
         _isStuckDetectionActive = false;
         _stuckRecoveryAttempts = 0;
+        
+        // Reset unreachable position detection
+        _positionAttempts.Clear();
+        _lastAttemptedPosition = Vector3.Zero;
         
         // Reset death handling
         _wasDead = false;
@@ -889,6 +897,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 }
             }
 
+            // Check if the current position is unreachable before attempting movement
+            if (IsPositionUnreachable(currentTask.WorldPosition))
+            {
+                // Position is unreachable, skip it
+                _tasks.RemoveAt(0);
+                yield break;
+            }
+            
+            // Record the attempt to reach this position
+            RecordPositionAttempt(currentTask.WorldPosition);
+            
             switch (currentTask.Type)
             {
                 case TaskNode.TaskNodeType.Movement:
@@ -919,6 +938,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     if (!ExecuteMouseActionIfPossible(() =>
                     {
                         Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
+                        
+                        // Force a click if the setting is enabled to prevent getting stuck on UI elements
+                        if (Settings.ForceClickDuringMovement.Value)
+                        {
+                            Mouse.LeftClick(1);
+                        }
+                        
                         Input.KeyDown(Settings.MovementKey);
                         Input.KeyUp(Settings.MovementKey);
                     }))
@@ -1022,6 +1048,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                             if (!ExecuteMouseActionIfPossible(() =>
                             {
                                 Mouse.SetCursorPosHuman2(screenPos);
+                                
+                                // Force a click if the setting is enabled to prevent getting stuck on UI elements
+                                if (Settings.ForceClickDuringMovement.Value)
+                                {
+                                    Mouse.LeftClick(1);
+                                }
+                                
                                 Input.KeyDown(Settings.MovementKey);
                                 Input.KeyUp(Settings.MovementKey);
                             }))
@@ -1233,14 +1266,21 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
         
         // Check if enough time has passed for stuck detection
-        if (now - _lastStuckCheckTime < TimeSpan.FromMilliseconds(1000))
+        // Use more aggressive timing when aggressive stuck detection is enabled
+        var checkInterval = Settings.AggressiveStuckDetection.Value ? 500 : 1000;
+        if (now - _lastStuckCheckTime < TimeSpan.FromMilliseconds(checkInterval))
             return;
             
         // Calculate movement since last check
         var movementDistance = Vector3.Distance(currentPos, _lastStuckCheckPosition);
         
         // Check if we've moved enough to not be considered stuck
-        if (movementDistance >= Settings.StuckMovementThreshold.Value)
+        // Use more aggressive threshold when aggressive stuck detection is enabled
+        var movementThreshold = Settings.AggressiveStuckDetection.Value ? 
+            Settings.StuckMovementThreshold.Value * 0.7f : 
+            Settings.StuckMovementThreshold.Value;
+            
+        if (movementDistance >= movementThreshold)
         {
             // We're moving, reset stuck detection
             _isStuckDetectionActive = false;
@@ -1262,8 +1302,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         else
         {
             // Check if we've been stuck long enough to trigger recovery
+            // Use more aggressive timing when aggressive stuck detection is enabled
+            var stuckDetectionTime = Settings.AggressiveStuckDetection.Value ? 
+                Settings.StuckDetectionTime.Value * 0.6f : 
+                Settings.StuckDetectionTime.Value;
+                
             var stuckDuration = now - _stuckDetectionStartTime;
-            if (stuckDuration.TotalMilliseconds >= Settings.StuckDetectionTime.Value)
+            if (stuckDuration.TotalMilliseconds >= stuckDetectionTime)
             {
                 // We're stuck! Attempt recovery
                 AttemptStuckRecovery();
@@ -1342,6 +1387,55 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _stuckDetectionStartTime = DateTime.Now;
         
         // Attempting stuck recovery with random movement
+    }
+    
+    /// <summary>
+    /// Checks if a position is likely unreachable based on repeated failed attempts
+    /// </summary>
+    /// <param name="targetPosition">The position to check</param>
+    /// <returns>True if the position should be considered unreachable</returns>
+    private bool IsPositionUnreachable(Vector3 targetPosition)
+    {
+        if (!Settings.UnreachablePositionDetection.Value)
+            return false;
+            
+        // Find similar positions within threshold
+        var similarPositions = _positionAttempts.Keys.Where(pos => 
+            Vector3.Distance(pos, targetPosition) <= Settings.PositionSimilarityThreshold.Value);
+        
+        var totalAttempts = similarPositions.Sum(pos => _positionAttempts[pos]);
+        
+        return totalAttempts >= Settings.MaxSamePositionAttempts.Value;
+    }
+    
+    /// <summary>
+    /// Records an attempt to reach a position
+    /// </summary>
+    /// <param name="position">The position being attempted</param>
+    private void RecordPositionAttempt(Vector3 position)
+    {
+        if (!Settings.UnreachablePositionDetection.Value)
+            return;
+            
+        // Clean up old position attempts (keep last 50 to prevent memory bloat)
+        if (_positionAttempts.Count > 50)
+        {
+            var oldestKey = _positionAttempts.Keys.First();
+            _positionAttempts.Remove(oldestKey);
+        }
+        
+        // Find similar position within threshold
+        var similarPosition = _positionAttempts.Keys.FirstOrDefault(pos => 
+            Vector3.Distance(pos, position) <= Settings.PositionSimilarityThreshold.Value);
+        
+        if (similarPosition != Vector3.Zero)
+        {
+            _positionAttempts[similarPosition]++;
+        }
+        else
+        {
+            _positionAttempts[position] = 1;
+        }
     }
     
     /// <summary>
@@ -2234,16 +2328,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var screenPos = Camera.WorldToScreen(worldPos);
         var result = screenPos + windowRect.Location;
 
-        var edgeBounds = 50;
-        if (!windowRect.Intersects(new SharpDX.RectangleF(result.X, result.Y, edgeBounds, edgeBounds)))
-        {
-            //Adjust for offscreen entity. Need to clamp the screen position using the game window info. 
-            if (result.X < windowRect.TopLeft.X) result.X = windowRect.TopLeft.X + edgeBounds;
-            if (result.Y < windowRect.TopLeft.Y) result.Y = windowRect.TopLeft.Y + edgeBounds;
-            if (result.X > windowRect.BottomRight.X) result.X = windowRect.BottomRight.X - edgeBounds;
-            if (result.Y > windowRect.BottomRight.Y) result.Y = windowRect.BottomRight.Y - edgeBounds;
-        }
-        return result;
+        // Calculate allowed area as percentage from center
+        var centerX = windowRect.X + windowRect.Width / 2;
+        var centerY = windowRect.Y + windowRect.Height / 2;
+        var allowedPercent = Settings.MouseMovementAreaPercent.Value / 100.0f;
+        
+        var maxOffsetX = (windowRect.Width / 2) * allowedPercent;
+        var maxOffsetY = (windowRect.Height / 2) * allowedPercent;
+        
+        // Constrain to the allowed area
+        var constrainedX = Math.Max(centerX - maxOffsetX, Math.Min(centerX + maxOffsetX, result.X));
+        var constrainedY = Math.Max(centerY - maxOffsetY, Math.Min(centerY + maxOffsetY, result.Y));
+        
+        return new Vector2(constrainedX, constrainedY);
     }
     
     public override void OnClose()
