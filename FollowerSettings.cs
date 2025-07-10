@@ -98,4 +98,9 @@ public class FollowerSettings : ISettings
     // Mouse Movement Settings
     [Menu("Mouse Movement Area (% from center)")] public RangeNode<int> MouseMovementAreaPercent { get; set; } = new RangeNode<int>(75, 50, 100);
     [Menu("Force Click During Movement")] public ToggleNode ForceClickDuringMovement { get; set; } = new ToggleNode(true);
+    
+    // Portal Avoidance Settings
+    [Menu("Enable Portal Avoidance")] public ToggleNode EnablePortalAvoidance { get; set; } = new ToggleNode(true);
+    [Menu("Portal Avoidance Distance")] public RangeNode<int> PortalAvoidanceDistance { get; set; } = new RangeNode<int>(300, 150, 800);
+    [Menu("Portal Avoidance Grace Period (ms)")] public RangeNode<int> PortalAvoidanceGracePeriod { get; set; } = new RangeNode<int>(3000, 1000, 10000);
 }

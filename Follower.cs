@@ -598,6 +598,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             _stuckRecoveryAttempts = 0;
         }
         
+        // Check if we should avoid targeting the leader due to portal proximity
+        if (IsInPortalAvoidanceGracePeriod() && IsPositionTooCloseToPortal(_followTarget.Pos))
+        {
+            // Leader is too close to portal during grace period, wait
+            return;
+        }
+        
         // Leader moved VERY far in one frame. Check for transition to use to follow them.
         var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
         if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
@@ -635,7 +642,16 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // Close follow logic. We have no current tasks. Check if we should move towards leader
             if (distanceFromFollower >= Settings.PathfindingNodeDistance.Value)
+            {
+                // Check if we should avoid targeting the leader due to portal proximity
+                if (IsInPortalAvoidanceGracePeriod() && IsPositionTooCloseToPortal(_followTarget.Pos))
+                {
+                    // Leader is too close to portal during grace period, wait
+                    return;
+                }
+                
                 _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
+            }
         }
 
         // Check if we should add quest loot logic. We're close to leader already
@@ -1439,6 +1455,48 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
+    /// Checks if we're in the portal avoidance grace period after entering a new area
+    /// </summary>
+    /// <returns>True if we should avoid targeting positions near portals</returns>
+    private bool IsInPortalAvoidanceGracePeriod()
+    {
+        if (!Settings.EnablePortalAvoidance.Value)
+            return false;
+            
+        if (_areaChangeTime == DateTime.MinValue)
+            return false;
+            
+        var timeSinceAreaChange = DateTime.Now - _areaChangeTime;
+        return timeSinceAreaChange.TotalMilliseconds <= Settings.PortalAvoidanceGracePeriod.Value;
+    }
+    
+    /// <summary>
+    /// Checks if a position is too close to a portal (should be avoided)
+    /// </summary>
+    /// <param name="targetPosition">The position to check</param>
+    /// <returns>True if the position should be avoided due to portal proximity</returns>
+    private bool IsPositionTooCloseToPortal(Vector3 targetPosition)
+    {
+        if (!Settings.EnablePortalAvoidance.Value)
+            return false;
+            
+        foreach (var transition in _areaTransitions.Values)
+        {
+            if (transition.Type == ExileCore.Shared.Enums.EntityType.Portal || 
+                transition.Type == ExileCore.Shared.Enums.EntityType.TownPortal)
+            {
+                var distanceToPortal = Vector3.Distance(targetPosition, transition.Pos);
+                if (distanceToPortal <= Settings.PortalAvoidanceDistance.Value)
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /// <summary>
     /// Handles death detection and resurrection logic
     /// </summary>
     private void CheckDeathHandling()
@@ -2215,6 +2273,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             var searchTime = DateTime.Now - _teleportSearchStartTime;
             Graphics.DrawText($"TELEPORT SEARCH: {searchTime.TotalSeconds:F1}s", new Vector2(500, 160), SharpDX.Color.Yellow);
+        }
+        
+        // Show portal avoidance status
+        if (Settings.EnablePortalAvoidance.Value && IsInPortalAvoidanceGracePeriod())
+        {
+            var graceTime = DateTime.Now - _areaChangeTime;
+            var remainingTime = Settings.PortalAvoidanceGracePeriod.Value - graceTime.TotalMilliseconds;
+            var isAvoidingPortal = _followTarget != null && IsPositionTooCloseToPortal(_followTarget.Pos);
+            var statusText = isAvoidingPortal ? "AVOIDING PORTAL" : "PORTAL GRACE";
+            var statusColor = isAvoidingPortal ? SharpDX.Color.Red : SharpDX.Color.Orange;
+            Graphics.DrawText($"{statusText}: {remainingTime / 1000:F1}s", new Vector2(500, 280), statusColor);
         }
         
         // Show gem leveling status
