@@ -3245,4 +3245,3 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         public int Port { get; set; }
         public DateTime Timestamp { get; set; }
     }
-}
