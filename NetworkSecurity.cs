@@ -236,7 +236,7 @@ namespace Follower
             {
                 // Import leader's public key
                 var leaderRsa = new RSACryptoServiceProvider();
-                leaderRsa.ImportRSAPublicKey(Convert.FromBase64String(leaderPublicKey));
+                leaderRsa.ImportRSAPublicKey(Convert.FromBase64String(leaderPublicKey), out _);
                 
                 // Encrypt our AES key with leader's public key
                 var keyData = new

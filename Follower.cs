@@ -206,7 +206,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     {
         // Network logger events
         _networkLogger.LogEvent += (sender, args) => {
-            if (args.LogEntry.Level >= NetworkLogger.LogLevel.Error)
+            if (args.LogEntry.Level >= LogLevel.Error)
             {
                 LogMessage($"Network Error: {args.LogEntry.EventType} - {args.LogEntry.Data}", 1);
             }
@@ -2204,7 +2204,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
             // Count occupied inventory slots
             var occupiedSlots = 0;
-            var totalSlots = inventory.TotalBoxes;
+            var totalSlots = 60; // Standard inventory size (12x5)
             
             // Count non-empty slots
             for (int i = 0; i < inventory.Items.Count; i++)

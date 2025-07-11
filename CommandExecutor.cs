@@ -11,6 +11,7 @@ using ExileCore.PoEMemory.Elements;
 using ExileCore.Shared.Enums;
 using SharpDX;
 using System.Windows.Forms;
+using ExileCore.Shared;
 
 namespace Follower
 {
@@ -288,7 +289,7 @@ namespace Follower
                     await Task.Delay(_random.Next(100, 200));
                     
                     // Right-click to open
-                    Mouse.RightClick();
+                                            Mouse.RightClick(100);
                     await Task.Delay(_random.Next(200, 400));
                     
                     // Wait for stash to open
@@ -368,7 +369,7 @@ namespace Follower
             try
             {
                 var inventory = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                return inventory?.VisibleInventoryItems?.ToList() ?? new List<Entity>();
+                return inventory?.InventoryItems?.ToList() ?? new List<Entity>();
             }
             catch
             {
@@ -438,7 +439,7 @@ namespace Follower
             {
                 // Get item position in inventory
                 var inventoryElement = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                var itemElement = inventoryElement?.VisibleInventoryItems?.FirstOrDefault(i => i.Id == item.Id);
+                var itemElement = inventoryElement?.InventoryItems?.FirstOrDefault(i => i.Id == item.Id);
                 
                 if (itemElement == null) return false;
                 
@@ -451,11 +452,11 @@ namespace Follower
                 await Task.Delay(_random.Next(50, 150));
                 
                 // Hold Ctrl and click to move to stash
-                Keyboard.KeyDown(Keys.LControlKey);
+                Input.KeyDown(Keys.LControlKey);
                 await Task.Delay(50);
                 Mouse.LeftClick();
                 await Task.Delay(100);
-                Keyboard.KeyUp(Keys.LControlKey);
+                Input.KeyUp(Keys.LControlKey);
                 
                 // Wait for item to be stashed
                 await Task.Delay(_settings.ItemPlacementDelay.Value);
@@ -474,7 +475,9 @@ namespace Follower
             try
             {
                 // Press Escape to close stash
-                Keyboard.KeyPress(Keys.Escape);
+                Input.KeyDown(Keys.Escape);
+                await Task.Delay(50);
+                Input.KeyUp(Keys.Escape);
                 await Task.Delay(200);
             }
             catch (Exception ex)
@@ -517,7 +520,7 @@ namespace Follower
                 var playerPos = _gameController.Player.Pos;
                 return _gameController.EntityListWrapper.Entities
                     .Where(e => e.Type == EntityType.Npc)
-                    .Where(e => e.GetComponent<NPC>()?.IsVendor == true)
+                    .Where(e => e.GetComponent<NPC>() != null)
                     .Where(e => Vector3.Distance(playerPos, e.Pos) < 300)
                     .OrderBy(e => Vector3.Distance(playerPos, e.Pos))
                     .FirstOrDefault();
@@ -568,7 +571,7 @@ namespace Follower
         {
             try
             {
-                var vendorPanel = _gameController.Game.IngameState.IngameUi.VendorWindow;
+                var vendorPanel = _gameController.Game.IngameState.IngameUi.PurchaseWindow;
                 return vendorPanel != null && vendorPanel.IsVisible;
             }
             catch
@@ -666,7 +669,7 @@ namespace Follower
             try
             {
                 var inventoryElement = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                var itemElement = inventoryElement?.VisibleInventoryItems?.FirstOrDefault(i => i.Id == item.Id);
+                var itemElement = inventoryElement?.InventoryItems?.FirstOrDefault(i => i.Id == item.Id);
                 
                 if (itemElement == null) return false;
                 
@@ -678,11 +681,11 @@ namespace Follower
                 await Task.Delay(_random.Next(50, 150));
                 
                 // Hold Ctrl and click to sell
-                Keyboard.KeyDown(Keys.LControlKey);
+                Input.KeyDown(Keys.LControlKey);
                 await Task.Delay(50);
                 Mouse.LeftClick();
                 await Task.Delay(100);
-                Keyboard.KeyUp(Keys.LControlKey);
+                Input.KeyUp(Keys.LControlKey);
                 
                 await Task.Delay(_settings.ItemSellDelay.Value);
                 
@@ -699,7 +702,9 @@ namespace Follower
         {
             try
             {
-                Keyboard.KeyPress(Keys.Escape);
+                Input.KeyDown(Keys.Escape);
+                await Task.Delay(50);
+                Input.KeyUp(Keys.Escape);
                 await Task.Delay(200);
             }
             catch (Exception ex)
@@ -734,7 +739,7 @@ namespace Follower
         {
             try
             {
-                var tradePanel = _gameController.Game.IngameState.IngameUi.TradeRequestPanel;
+                var tradePanel = _gameController.Game.IngameState.IngameUi.TradeWindow;
                 if (tradePanel == null || !tradePanel.IsVisible)
                     return null;
                 
@@ -834,13 +839,15 @@ namespace Follower
             try
             {
                 // Find and click accept button
-                var tradePanel = _gameController.Game.IngameState.IngameUi.TradeRequestPanel;
+                var tradePanel = _gameController.Game.IngameState.IngameUi.TradeWindow;
                 if (tradePanel == null || !tradePanel.IsVisible)
                     return false;
                 
                 // Implementation would click the accept button
                 // This is a simplified version
-                Keyboard.KeyPress(Keys.F5); // Assuming F5 accepts trade
+                Input.KeyDown(Keys.F5); // Assuming F5 accepts trade
+                await Task.Delay(50);
+                Input.KeyUp(Keys.F5);
                 await Task.Delay(500);
                 
                 return true;
@@ -888,7 +895,9 @@ namespace Follower
             try
             {
                 // Click accept in trade window
-                Keyboard.KeyPress(Keys.Space); // Assuming Space accepts trade
+                Input.KeyDown(Keys.Space); // Assuming Space accepts trade
+                await Task.Delay(50);
+                Input.KeyUp(Keys.Space);
                 await Task.Delay(500);
                 
                 return true;
