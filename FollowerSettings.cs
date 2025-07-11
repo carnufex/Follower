@@ -103,4 +103,70 @@ public class FollowerSettings : ISettings
     [Menu("Enable Portal Avoidance")] public ToggleNode EnablePortalAvoidance { get; set; } = new ToggleNode(true);
     [Menu("Portal Avoidance Distance")] public RangeNode<int> PortalAvoidanceDistance { get; set; } = new RangeNode<int>(300, 150, 800);
     [Menu("Portal Avoidance Grace Period (ms)")] public RangeNode<int> PortalAvoidanceGracePeriod { get; set; } = new RangeNode<int>(3000, 1000, 10000);
+    
+    // Leader Commands Integration Settings
+    [Menu("Enable Leader Commands")] public ToggleNode EnableLeaderCommands { get; set; } = new ToggleNode(false);
+    [Menu("Leader Commands Check Interval (ms)")] public RangeNode<int> LeaderCommandsCheckInterval { get; set; } = new RangeNode<int>(1000, 500, 5000);
+    [Menu("Execute Commands While Following")] public ToggleNode ExecuteCommandsWhileFollowing { get; set; } = new ToggleNode(true);
+    [Menu("Max Command Execution Time (ms)")] public RangeNode<int> MaxCommandExecutionTime { get; set; } = new RangeNode<int>(60000, 10000, 300000);
+    
+    // Network Communication Settings
+    [Menu("Enable Network Communication")] public ToggleNode EnableNetworkCommunication { get; set; } = new ToggleNode(false);
+    [Menu("Enable Auto Discovery")] public ToggleNode EnableAutoDiscovery { get; set; } = new ToggleNode(true);
+    [Menu("Leader IP Address")] public TextNode LeaderIpAddress { get; set; } = new TextNode("");
+    [Menu("Leader Port")] public RangeNode<int> LeaderPort { get; set; } = new RangeNode<int>(7777, 1024, 65535);
+    [Menu("Discovery Port")] public RangeNode<int> DiscoveryPort { get; set; } = new RangeNode<int>(7778, 1024, 65535);
+    [Menu("Connection Retry Interval (ms)")] public RangeNode<int> ConnectionRetryInterval { get; set; } = new RangeNode<int>(5000, 1000, 30000);
+    [Menu("Heartbeat Interval (ms)")] public RangeNode<int> HeartbeatInterval { get; set; } = new RangeNode<int>(10000, 5000, 60000);
+    
+    // Stashing Settings
+    [Menu("Enable Stashing Commands")] public ToggleNode EnableStashingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Stash Tab Switch Delay (ms)")] public RangeNode<int> StashTabSwitchDelay { get; set; } = new RangeNode<int>(200, 50, 1000);
+    [Menu("Item Placement Delay (ms)")] public RangeNode<int> ItemPlacementDelay { get; set; } = new RangeNode<int>(100, 50, 500);
+    
+    // Selling Settings  
+    [Menu("Enable Selling Commands")] public ToggleNode EnableSellingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Vendor Interaction Delay (ms)")] public RangeNode<int> VendorInteractionDelay { get; set; } = new RangeNode<int>(300, 100, 1000);
+    [Menu("Item Sell Delay (ms)")] public RangeNode<int> ItemSellDelay { get; set; } = new RangeNode<int>(150, 50, 500);
+    
+    // Trading Settings
+    [Menu("Enable Trading Commands")] public ToggleNode EnableTradingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Trade Request Timeout (ms)")] public RangeNode<int> TradeRequestTimeout { get; set; } = new RangeNode<int>(15000, 5000, 60000);
+    [Menu("Trade Window Delay (ms)")] public RangeNode<int> TradeWindowDelay { get; set; } = new RangeNode<int>(500, 100, 2000);
+    
+    // Security Settings
+    [Menu("Enable Security Features")] public ToggleNode EnableSecurityFeatures { get; set; } = new ToggleNode(true);
+    [Menu("Enable Message Encryption")] public ToggleNode EnableMessageEncryption { get; set; } = new ToggleNode(true);
+    [Menu("Enable Authentication")] public ToggleNode EnableAuthentication { get; set; } = new ToggleNode(true);
+    [Menu("API Key")] public TextNode ApiKey { get; set; } = new TextNode("");
+    [Menu("Max Message Age (ms)")] public RangeNode<int> MaxMessageAge { get; set; } = new RangeNode<int>(30000, 10000, 300000);
+    [Menu("Security Audit Logging")] public ToggleNode SecurityAuditLogging { get; set; } = new ToggleNode(true);
+    
+    // Advanced Monitoring Settings
+    [Menu("Enable Performance Monitoring")] public ToggleNode EnablePerformanceMonitoring { get; set; } = new ToggleNode(true);
+    [Menu("Enable Health Checks")] public ToggleNode EnableHealthChecks { get; set; } = new ToggleNode(true);
+    [Menu("Health Check Interval (ms)")] public RangeNode<int> HealthCheckInterval { get; set; } = new RangeNode<int>(30000, 10000, 300000);
+    [Menu("Metrics Collection Interval (ms)")] public RangeNode<int> MetricsCollectionInterval { get; set; } = new RangeNode<int>(30000, 10000, 300000);
+    [Menu("Enable Structured Logging")] public ToggleNode EnableStructuredLogging { get; set; } = new ToggleNode(true);
+    [Menu("Log Level")] public RangeNode<int> LogLevel { get; set; } = new RangeNode<int>(1, 0, 4); // 0=Debug, 1=Info, 2=Warning, 3=Error, 4=Critical
+    
+    // Circuit Breaker Settings
+    [Menu("Enable Circuit Breakers")] public ToggleNode EnableCircuitBreakers { get; set; } = new ToggleNode(true);
+    [Menu("Circuit Breaker Failure Threshold")] public RangeNode<int> CircuitBreakerFailureThreshold { get; set; } = new RangeNode<int>(5, 2, 20);
+    [Menu("Circuit Breaker Timeout (ms)")] public RangeNode<int> CircuitBreakerTimeout { get; set; } = new RangeNode<int>(60000, 10000, 300000);
+    [Menu("Circuit Breaker Reset Attempts")] public RangeNode<int> CircuitBreakerResetAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
+    
+    // Message Protocol Settings
+    [Menu("Enable Enhanced Protocol")] public ToggleNode EnableEnhancedProtocol { get; set; } = new ToggleNode(true);
+    [Menu("Protocol Version")] public RangeNode<int> ProtocolVersion { get; set; } = new RangeNode<int>(2, 1, 2);
+    [Menu("Message Deduplication")] public ToggleNode EnableMessageDeduplication { get; set; } = new ToggleNode(true);
+    [Menu("Message Ordering")] public ToggleNode EnableMessageOrdering { get; set; } = new ToggleNode(true);
+    [Menu("Message Prioritization")] public ToggleNode EnableMessagePrioritization { get; set; } = new ToggleNode(true);
+    [Menu("Message Compression")] public ToggleNode EnableMessageCompression { get; set; } = new ToggleNode(false);
+    
+    // Auto-Configuration Settings
+    [Menu("Enable Auto Configuration")] public ToggleNode EnableAutoConfiguration { get; set; } = new ToggleNode(true);
+    [Menu("Auto Optimize Performance")] public ToggleNode AutoOptimizePerformance { get; set; } = new ToggleNode(true);
+    [Menu("Auto Detect Network")] public ToggleNode AutoDetectNetwork { get; set; } = new ToggleNode(true);
+    [Menu("Configuration Validation")] public ToggleNode EnableConfigurationValidation { get; set; } = new ToggleNode(true);
 }

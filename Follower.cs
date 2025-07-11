@@ -12,7 +12,12 @@ using System;
 using System.Drawing;
 using System.Threading;
 using System.Collections;
+using System.Net;
+using System.Net.Sockets;
+using System.Net.NetworkInformation;
+using System.Text;
 using ExileCore.Shared;
+using Newtonsoft.Json;
 
 namespace Follower;
 
@@ -99,6 +104,36 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private DateTime _lastInventoryCheckTime = DateTime.MinValue;
     private bool _isManagingInventory = false;
     private DateTime _portalUsedTime = DateTime.MinValue;
+    
+    // Leader commands variables
+    private DateTime _lastCommandCheckTime = DateTime.MinValue;
+    private bool _isExecutingCommand = false;
+    private string _currentCommand = null;
+    private DateTime _commandStartTime = DateTime.MinValue;
+    private List<string> _processedCommands = new List<string>();
+    
+    // Network communication variables
+    private TcpClient _tcpClient;
+    private UdpClient _discoveryListener;
+    private NetworkStream _networkStream;
+    private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+    private Task _networkTask;
+    private Task _discoveryTask;
+    private bool _isConnectedToLeader = false;
+    private string _connectedLeaderName = "";
+    private string _leaderIpAddress = "";
+    private int _leaderPort = 7777;
+    private DateTime _lastConnectionAttempt = DateTime.MinValue;
+    private DateTime _lastHeartbeat = DateTime.MinValue;
+    private readonly object _networkLock = new object();
+    private Queue<CommandMessage> _pendingCommands = new Queue<CommandMessage>();
+    
+    // Advanced infrastructure components
+    private NetworkSecurity _networkSecurity;
+    private NetworkReliability _networkReliability;
+    private NetworkLogger _networkLogger;
+    private EnhancedMessageProtocol _messageProtocol;
+    private CommandExecutor _commandExecutor;
 
     public override bool Initialise()
     {
@@ -108,8 +143,108 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         Input.RegisterKey(Settings.ToggleFollower.Value);
         Settings.ToggleFollower.OnValueChanged += () => { Input.RegisterKey(Settings.ToggleFollower.Value); };
 
+        // Initialize advanced infrastructure components
+        InitializeAdvancedInfrastructure();
+
+        // Start network services if enabled
+        if (Settings.EnableNetworkCommunication.Value)
+        {
+            StartNetworkServices();
+        }
+
         StartFollowerCoroutine();
         return base.Initialise();
+    }
+    
+    /// <summary>
+    /// Initializes the advanced infrastructure components for production-ready operation
+    /// </summary>
+    private void InitializeAdvancedInfrastructure()
+    {
+        try
+        {
+            // Generate unique connection ID
+            var connectionId = $"follower-{Environment.MachineName}-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            
+            // Initialize network logger
+            _networkLogger = new NetworkLogger(connectionId);
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Component = "NetworkLogger", Status = "Started" });
+            
+            // Initialize network security with API key
+            var apiKey = GenerateSecureApiKey();
+            _networkSecurity = new NetworkSecurity(apiKey);
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Component = "NetworkSecurity", Status = "Started" });
+            
+            // Initialize network reliability
+            _networkReliability = new NetworkReliability();
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Component = "NetworkReliability", Status = "Started" });
+            
+            // Initialize enhanced message protocol
+            _messageProtocol = new EnhancedMessageProtocol(connectionId);
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Component = "EnhancedMessageProtocol", Status = "Started" });
+            
+            // Initialize command executor
+            _commandExecutor = new CommandExecutor(GameController, Settings, _networkLogger, _networkReliability);
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Component = "CommandExecutor", Status = "Started" });
+            
+            // Set up event handlers
+            SetupEventHandlers();
+            
+            _networkLogger.LogNetworkEvent("INITIALIZATION", new { Status = "All components initialized successfully" });
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to initialize advanced infrastructure: {ex.Message}", 1);
+            throw;
+        }
+    }
+    
+    /// <summary>
+    /// Sets up event handlers for advanced components
+    /// </summary>
+    private void SetupEventHandlers()
+    {
+        // Network logger events
+        _networkLogger.LogEvent += (sender, args) => {
+            if (args.LogEntry.Level >= NetworkLogger.LogLevel.Error)
+            {
+                LogMessage($"Network Error: {args.LogEntry.EventType} - {args.LogEntry.Data}", 1);
+            }
+        };
+        
+        _networkLogger.MetricsReported += (sender, args) => {
+            var healthStatus = _networkLogger.GetHealthStatus();
+            if (!healthStatus.IsHealthy)
+            {
+                LogMessage($"Network health degraded: {healthStatus.ErrorsLast5Minutes} errors in last 5 minutes", 2);
+            }
+        };
+        
+        // Message protocol events
+        _messageProtocol.MessageReceived += (sender, args) => {
+            _networkLogger.LogNetworkEvent("MESSAGE_RECEIVED", new { 
+                MessageId = args.Message.MessageId,
+                MessageType = args.Message.MessageType,
+                SenderId = args.Message.SenderId
+            });
+        };
+        
+        _messageProtocol.MessageError += (sender, args) => {
+            _networkLogger.LogError($"Message protocol error: {args.Error.Message}", args.Error, "message_protocol");
+        };
+    }
+    
+    /// <summary>
+    /// Generates a secure API key for network communication
+    /// </summary>
+    private string GenerateSecureApiKey()
+    {
+        // Generate a secure API key based on machine and user info
+        var machineInfo = $"{Environment.MachineName}-{Environment.UserName}";
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var random = Guid.NewGuid().ToString("N");
+        
+        return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{machineInfo}-{timestamp}-{random}"));
     }
 
 
@@ -176,6 +311,281 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastInventoryCheckTime = DateTime.MinValue;
         _isManagingInventory = false;
         _portalUsedTime = DateTime.MinValue;
+    }
+
+    private void StartNetworkServices()
+    {
+        try
+        {
+            // Start auto-discovery listener if enabled
+            if (Settings.EnableAutoDiscovery.Value)
+            {
+                _discoveryTask = Task.Run(() => StartDiscoveryListener(_cancellationTokenSource.Token));
+            }
+            
+            // Start TCP client connection
+            _networkTask = Task.Run(() => ConnectToLeader(_cancellationTokenSource.Token));
+            
+            LogMessage("Network services started successfully", 4);
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to start network services: {ex.Message}", 1);
+        }
+    }
+
+    private async Task StartDiscoveryListener(CancellationToken cancellationToken)
+    {
+        try
+        {
+            _discoveryListener = new UdpClient(Settings.DiscoveryPort.Value);
+            
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var result = await _discoveryListener.ReceiveAsync();
+                    var message = Encoding.UTF8.GetString(result.Buffer);
+                    
+                    var discoveryMessage = JsonConvert.DeserializeObject<DiscoveryMessage>(message);
+                    
+                    if (discoveryMessage?.Type == "LEADER_DISCOVERY")
+                    {
+                        // Check if this is a leader we want to follow
+                        if (ShouldFollowLeader(discoveryMessage.LeaderName))
+                        {
+                            lock (_networkLock)
+                            {
+                                _leaderIpAddress = discoveryMessage.IpAddress;
+                                _leaderPort = discoveryMessage.Port;
+                            }
+                            
+                            LogMessage($"Discovered leader '{discoveryMessage.LeaderName}' at {discoveryMessage.IpAddress}:{discoveryMessage.Port}", 4);
+                            
+                            // Try to connect if not already connected
+                            if (!_isConnectedToLeader)
+                            {
+                                _ = Task.Run(() => ConnectToLeader(_cancellationTokenSource.Token));
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error in discovery listener: {ex.Message}", 1);
+                    await Task.Delay(1000, cancellationToken);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Discovery listener error: {ex.Message}", 1);
+        }
+    }
+
+    private bool ShouldFollowLeader(string leaderName)
+    {
+        if (string.IsNullOrEmpty(leaderName))
+            return false;
+            
+        // Check if auto-discovery is enabled
+        if (!Settings.EnableAutoDiscovery.Value)
+            return false;
+            
+        // Check if the leader name matches any of our target leaders
+        var leaderNames = Settings.LeaderNames.Value.Split(',')
+            .Select(name => name.Trim())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
+            
+        return leaderNames.Any(name => string.Equals(name, leaderName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task ConnectToLeader(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (_isConnectedToLeader)
+                {
+                    await Task.Delay(5000, cancellationToken); // Check connection every 5 seconds
+                    continue;
+                }
+                
+                // Don't spam connection attempts
+                if (DateTime.Now - _lastConnectionAttempt < TimeSpan.FromSeconds(5))
+                {
+                    await Task.Delay(1000, cancellationToken);
+                    continue;
+                }
+                
+                _lastConnectionAttempt = DateTime.Now;
+                
+                string ipAddress;
+                int port;
+                
+                lock (_networkLock)
+                {
+                    ipAddress = !string.IsNullOrEmpty(_leaderIpAddress) ? _leaderIpAddress : Settings.LeaderIpAddress.Value;
+                    port = _leaderPort > 0 ? _leaderPort : Settings.LeaderPort.Value;
+                }
+                
+                if (string.IsNullOrEmpty(ipAddress) || port <= 0)
+                {
+                    await Task.Delay(5000, cancellationToken);
+                    continue;
+                }
+                
+                LogMessage($"Attempting to connect to leader at {ipAddress}:{port}", 4);
+                
+                _tcpClient = new TcpClient();
+                await _tcpClient.ConnectAsync(ipAddress, port);
+                
+                _networkStream = _tcpClient.GetStream();
+                _isConnectedToLeader = true;
+                _connectedLeaderName = GetConnectedLeaderName();
+                
+                LogMessage($"Connected to leader at {ipAddress}:{port}", 4);
+                
+                // Send initial connection message
+                await SendMessageToLeader(new FollowerMessage
+                {
+                    Type = "CONNECTED",
+                    Data = GameController?.Game?.IngameState?.Data?.LocalPlayer?.GetComponent<Player>()?.PlayerName ?? "Unknown",
+                    Timestamp = DateTime.Now
+                });
+                
+                // Start listening for messages
+                _ = Task.Run(() => ListenForMessages(cancellationToken));
+                
+                // Start heartbeat
+                _ = Task.Run(() => SendHeartbeat(cancellationToken));
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Failed to connect to leader: {ex.Message}", 1);
+                _isConnectedToLeader = false;
+                _tcpClient?.Close();
+                await Task.Delay(5000, cancellationToken);
+            }
+        }
+    }
+
+    private async Task ListenForMessages(CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4096];
+        
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested && _isConnectedToLeader && _networkStream != null)
+            {
+                var bytesRead = await _networkStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
+                
+                if (bytesRead == 0)
+                {
+                    // Connection closed
+                    break;
+                }
+                
+                var message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                await ProcessLeaderMessage(message);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error listening for messages: {ex.Message}", 1);
+        }
+        finally
+        {
+            _isConnectedToLeader = false;
+            _tcpClient?.Close();
+        }
+    }
+
+    private async Task ProcessLeaderMessage(string message)
+    {
+        try
+        {
+            var commandMessage = JsonConvert.DeserializeObject<CommandMessage>(message);
+            
+            if (commandMessage?.Type == "COMMAND")
+            {
+                lock (_networkLock)
+                {
+                    _pendingCommands.Enqueue(commandMessage);
+                }
+                
+                LogMessage($"Received command: {commandMessage.Command}", 4);
+                
+                // Send acknowledgment
+                await SendMessageToLeader(new FollowerMessage
+                {
+                    Type = "COMMAND_RECEIVED",
+                    Data = commandMessage.Command,
+                    Timestamp = DateTime.Now
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error processing leader message: {ex.Message}", 1);
+        }
+    }
+
+    private async Task SendMessageToLeader(FollowerMessage message)
+    {
+        try
+        {
+            if (_networkStream == null || !_isConnectedToLeader)
+                return;
+                
+            var jsonMessage = JsonConvert.SerializeObject(message);
+            var data = Encoding.UTF8.GetBytes(jsonMessage);
+            
+            await _networkStream.WriteAsync(data, 0, data.Length);
+            await _networkStream.FlushAsync();
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error sending message to leader: {ex.Message}", 1);
+            _isConnectedToLeader = false;
+        }
+    }
+
+    private async Task SendHeartbeat(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested && _isConnectedToLeader)
+            {
+                await Task.Delay(10000, cancellationToken); // Send heartbeat every 10 seconds
+                
+                await SendMessageToLeader(new FollowerMessage
+                {
+                    Type = "HEARTBEAT",
+                    Data = "alive",
+                    Timestamp = DateTime.Now
+                });
+                
+                _lastHeartbeat = DateTime.Now;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Heartbeat error: {ex.Message}", 1);
+        }
+    }
+
+    private string GetConnectedLeaderName()
+    {
+        // Try to get the leader name from the connected leaders
+        var leaderNames = Settings.LeaderNames.Value.Split(',')
+            .Select(name => name.Trim())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
+            
+        return leaderNames.FirstOrDefault() ?? "Unknown";
     }
 
     public override void AreaChange(AreaInstance area)
@@ -456,6 +866,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     // Check inventory management
                     CheckInventoryManagement();
                     
+                    // Check and execute leader commands
+                    CheckLeaderCommands();
+                    
                     // Refresh terrain data for dynamic obstacle detection
                     RefreshTerrainData();
                     
@@ -538,7 +951,61 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
         }
         
+        // Monitor network health and advanced infrastructure
+        MonitorAdvancedInfrastructure();
+        
         return null;
+    }
+    
+    /// <summary>
+    /// Monitors advanced infrastructure health and performance
+    /// </summary>
+    private void MonitorAdvancedInfrastructure()
+    {
+        try
+        {
+            // Check network health every 30 seconds
+            var now = DateTime.UtcNow;
+            if (_networkLogger != null && (now - _lastHeartbeat).TotalSeconds > 30)
+            {
+                _lastHeartbeat = now;
+                
+                // Get health status
+                var healthStatus = _networkLogger.GetHealthStatus();
+                
+                // Log health metrics
+                _networkLogger.RecordMetric("health.check", 1);
+                _networkLogger.RecordMetric("health.score", healthStatus.IsHealthy ? 1 : 0);
+                
+                // Check for network reliability issues
+                if (_networkReliability != null)
+                {
+                    var reliabilityReport = _networkReliability.GetHealthReport();
+                    if (reliabilityReport.IsUnhealthy)
+                    {
+                        _networkLogger.LogWarning("Network reliability degraded", new { 
+                            HealthScore = reliabilityReport.OverallHealthScore,
+                            TotalFailures = reliabilityReport.TotalFailures,
+                            TotalOperations = reliabilityReport.TotalOperations
+                        });
+                    }
+                }
+                
+                // Check message protocol statistics
+                if (_messageProtocol != null)
+                {
+                    var protocolStats = _messageProtocol.GetStatistics();
+                    _networkLogger.RecordMetric("protocol.processed_messages", protocolStats.ProcessedMessagesCount);
+                    _networkLogger.RecordMetric("protocol.pending_messages", protocolStats.PendingMessagesCount);
+                    _networkLogger.RecordMetric("protocol.incoming_queue", protocolStats.IncomingQueueSize);
+                    _networkLogger.RecordMetric("protocol.outgoing_queue", protocolStats.OutgoingQueueSize);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error monitoring advanced infrastructure: {ex.Message}", 1);
+        }
     }
 
     private void PlanTasks()
@@ -1737,11 +2204,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
             // Count occupied inventory slots
             var occupiedSlots = 0;
-            var totalSlots = inventory.Rows * inventory.Columns;
+            var totalSlots = inventory.TotalBoxes;
             
-            foreach (var item in inventory.InventorySlotItems)
+            // Count non-empty slots
+            for (int i = 0; i < inventory.Items.Count; i++)
             {
-                if (item != null)
+                if (inventory.Items[i] != null)
                     occupiedSlots++;
             }
             
@@ -2316,23 +2784,39 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
         }
         
+        // Show leader commands status
+        if (Settings.EnableLeaderCommands.Value)
+        {
+            var commandStatus = _isExecutingCommand ? $"EXECUTING: {_currentCommand}" : "WAITING FOR COMMANDS";
+            var commandColor = _isExecutingCommand ? SharpDX.Color.Orange : SharpDX.Color.LightBlue;
+            Graphics.DrawText($"Leader Commands: {commandStatus}", new Vector2(500, 220), commandColor);
+            
+            if (_isExecutingCommand)
+            {
+                var executionTime = DateTime.Now - _commandStartTime;
+                Graphics.DrawText($"Execution Time: {executionTime.TotalSeconds:F1}s", new Vector2(500, 240), SharpDX.Color.Yellow);
+            }
+        }
+        
         // Show coroutine status if monitoring is enabled
         if (Settings.EnableCoroutineMonitoring.Value)
         {
+            var yPos = Settings.EnableLeaderCommands.Value ? 260 : 220;
+            
             var followerStatus = _followerCoroutine?.Running == true ? "RUNNING" : "STOPPED";
             var followerColor = _followerCoroutine?.Running == true ? SharpDX.Color.Green : SharpDX.Color.Red;
-            Graphics.DrawText($"Follower Coroutine: {followerStatus}", new Vector2(500, 220), followerColor);
+            Graphics.DrawText($"Follower Coroutine: {followerStatus}", new Vector2(500, yPos), followerColor);
             
             if (_postTransitionCoroutine != null)
             {
                 var graceStatus = _postTransitionCoroutine.Running ? "ACTIVE" : "INACTIVE";
                 var graceColor = _postTransitionCoroutine.Running ? SharpDX.Color.Yellow : SharpDX.Color.Gray;
-                Graphics.DrawText($"Grace Period: {graceStatus}", new Vector2(500, 240), graceColor);
+                Graphics.DrawText($"Grace Period: {graceStatus}", new Vector2(500, yPos + 20), graceColor);
             }
             
             if (_isTransitioning)
             {
-                Graphics.DrawText("TRANSITIONING", new Vector2(500, 260), SharpDX.Color.Cyan);
+                Graphics.DrawText("TRANSITIONING", new Vector2(500, yPos + 40), SharpDX.Color.Cyan);
             }
         }
         
@@ -2412,12 +2896,353 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         return new Vector2(constrainedX, constrainedY);
     }
     
-    public override void OnClose()
-    {
-        // Stop all coroutines
-        _followerCoroutine?.Done();
-        _postTransitionCoroutine?.Done();
+            /// <summary>
+        /// Checks for and executes leader commands
+        /// </summary>
+        private void CheckLeaderCommands()
+        {
+            if (!Settings.EnableLeaderCommands.Value)
+                return;
+                
+            var now = DateTime.Now;
+            
+            // Check if enough time has passed since last command check
+            if (now - _lastCommandCheckTime < TimeSpan.FromMilliseconds(Settings.LeaderCommandsCheckInterval.Value))
+                return;
+                
+            _lastCommandCheckTime = now;
+            
+            // If we're currently executing a command, check timeout
+            if (_isExecutingCommand)
+            {
+                var executionTime = now - _commandStartTime;
+                if (executionTime.TotalMilliseconds > Settings.MaxCommandExecutionTime.Value)
+                {
+                    // Command timeout - stop execution
+                    _isExecutingCommand = false;
+                    _currentCommand = null;
+                    LogMessage($"Command execution timed out after {executionTime.TotalSeconds:F1}s", 2);
+                }
+                return; // Don't check for new commands while executing
+            }
+            
+            try
+            {
+                // Check if we're connected to a leader
+                if (!_isConnectedToLeader)
+                    return;
+                
+                CommandMessage commandMessage = null;
+                
+                // Get pending commands from network queue
+                lock (_networkLock)
+                {
+                    if (_pendingCommands.Count > 0)
+                    {
+                        commandMessage = _pendingCommands.Dequeue();
+                    }
+                }
+                
+                if (commandMessage == null)
+                    return;
+                    
+                // Check if we should execute commands while following
+                if (!Settings.ExecuteCommandsWhileFollowing.Value && _tasks.Count > 0)
+                    return;
+                    
+                // Execute the command
+                if (ExecuteLeaderCommand(commandMessage))
+                {
+                    _currentCommand = commandMessage.Command;
+                    _isExecutingCommand = true;
+                    _commandStartTime = now;
+                    _processedCommands.Add(commandMessage.Command);
+                    
+                    LogMessage($"Executing leader command: {commandMessage.Command}", 4);
+                    
+                    // Send completion acknowledgment
+                    _ = Task.Run(async () =>
+                    {
+                        await SendMessageToLeader(new FollowerMessage
+                        {
+                            Type = "COMMAND_STARTED",
+                            Data = commandMessage.Command,
+                            Timestamp = DateTime.Now
+                        });
+                    });
+                }
+                
+                // Clean up processed commands list to prevent memory bloat
+                if (_processedCommands.Count > 50)
+                {
+                    _processedCommands.RemoveRange(0, 25);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error checking leader commands: {ex.Message}", 1);
+            }
+        }
         
-        base.OnClose();
+        /// <summary>
+        /// Executes a leader command
+        /// </summary>
+        private bool ExecuteLeaderCommand(CommandMessage commandMessage)
+        {
+            try
+            {
+                return commandMessage.Command switch
+                {
+                    "STASH_ITEMS" => ExecuteStashCommand(commandMessage.Data),
+                    "SELL_ITEMS" => ExecuteSellCommand(commandMessage.Data),
+                    "ACCEPT_TRADE" => ExecuteTradeCommand(commandMessage.Data),
+                    "EMERGENCY_STOP" => ExecuteEmergencyStopCommand(),
+                    _ => false
+                };
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error executing command {commandMessage.Command}: {ex.Message}", 1);
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the stash items command using advanced command executor
+        /// </summary>
+        private bool ExecuteStashCommand(Dictionary<string, object> commandData)
+        {
+            if (!Settings.EnableStashingCommands.Value)
+                return false;
+                
+            try
+            {
+                // Execute using advanced command executor
+                var task = _commandExecutor.ExecuteStashCommand(commandData);
+                
+                // Handle async execution
+                task.ContinueWith(t => {
+                    if (t.IsCompletedSuccessfully)
+                    {
+                        var result = t.Result;
+                        if (result.IsSuccess)
+                        {
+                            LogMessage($"Stash command completed successfully: {result.Message}", 4);
+                        }
+                        else
+                        {
+                            LogMessage($"Stash command failed: {result.ErrorMessage}", 2);
+                        }
+                    }
+                    else
+                    {
+                        LogMessage($"Stash command error: {t.Exception?.GetBaseException().Message}", 1);
+                    }
+                }, TaskScheduler.Default);
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error in stash command: {ex.Message}", 1);
+                _networkLogger?.LogError($"Stash command error: {ex.Message}", ex, "stash_command");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the sell items command using advanced command executor
+        /// </summary>
+        private bool ExecuteSellCommand(Dictionary<string, object> commandData)
+        {
+            if (!Settings.EnableSellingCommands.Value)
+                return false;
+                
+            try
+            {
+                // Execute using advanced command executor
+                var task = _commandExecutor.ExecuteSellCommand(commandData);
+                
+                // Handle async execution
+                task.ContinueWith(t => {
+                    if (t.IsCompletedSuccessfully)
+                    {
+                        var result = t.Result;
+                        if (result.IsSuccess)
+                        {
+                            LogMessage($"Sell command completed successfully: {result.Message}", 4);
+                        }
+                        else
+                        {
+                            LogMessage($"Sell command failed: {result.ErrorMessage}", 2);
+                        }
+                    }
+                    else
+                    {
+                        LogMessage($"Sell command error: {t.Exception?.GetBaseException().Message}", 1);
+                    }
+                }, TaskScheduler.Default);
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error in sell command: {ex.Message}", 1);
+                _networkLogger?.LogError($"Sell command error: {ex.Message}", ex, "sell_command");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the accept trade command using advanced command executor
+        /// </summary>
+        private bool ExecuteTradeCommand(Dictionary<string, object> commandData)
+        {
+            if (!Settings.EnableTradingCommands.Value)
+                return false;
+                
+            try
+            {
+                // Execute using advanced command executor
+                var task = _commandExecutor.ExecuteTradeCommand(commandData);
+                
+                // Handle async execution
+                task.ContinueWith(t => {
+                    if (t.IsCompletedSuccessfully)
+                    {
+                        var result = t.Result;
+                        if (result.IsSuccess)
+                        {
+                            LogMessage($"Trade command completed successfully: {result.Message}", 4);
+                        }
+                        else
+                        {
+                            LogMessage($"Trade command failed: {result.ErrorMessage}", 2);
+                        }
+                    }
+                    else
+                    {
+                        LogMessage($"Trade command error: {t.Exception?.GetBaseException().Message}", 1);
+                    }
+                }, TaskScheduler.Default);
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error in trade command: {ex.Message}", 1);
+                _networkLogger?.LogError($"Trade command error: {ex.Message}", ex, "trade_command");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the emergency stop command
+        /// </summary>
+        private bool ExecuteEmergencyStopCommand()
+        {
+            try
+            {
+                // Stop all current activities
+                _tasks.Clear();
+                _isExecutingCommand = false;
+                _currentCommand = null;
+                _processedCommands.Clear();
+                
+                // Stop following temporarily
+                Settings.IsFollowEnabled.SetValueNoEvent(false);
+                
+                LogMessage("Emergency stop executed - all activities halted", 1);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error in emergency stop: {ex.Message}", 1);
+                return false;
+            }
+        }
+        
+        public override void OnClose()
+        {
+            // Stop all coroutines
+            _followerCoroutine?.Done();
+            _postTransitionCoroutine?.Done();
+            
+            base.OnClose();
+        }
+        
+        public override void Dispose()
+        {
+            try
+            {
+                _cancellationTokenSource?.Cancel();
+                
+                _tcpClient?.Close();
+                _discoveryListener?.Close();
+                _networkStream?.Close();
+                
+                _networkTask?.Wait(1000);
+                _discoveryTask?.Wait(1000);
+                
+                _cancellationTokenSource?.Dispose();
+                
+                // Dispose advanced infrastructure components
+                DisposeAdvancedInfrastructure();
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error disposing network services: {ex.Message}", 1);
+            }
+            
+            base.Dispose();
+        }
+        
+        /// <summary>
+        /// Disposes all advanced infrastructure components
+        /// </summary>
+        private void DisposeAdvancedInfrastructure()
+        {
+            try
+            {
+                _networkLogger?.LogNetworkEvent("SHUTDOWN", new { Status = "Disposing advanced infrastructure" });
+                
+                // Dispose components in reverse order of initialization
+                _commandExecutor = null;
+                _messageProtocol?.Dispose();
+                _networkSecurity?.Dispose();
+                _networkLogger?.Dispose();
+                
+                LogMessage("Advanced infrastructure disposed successfully", 4);
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error disposing advanced infrastructure: {ex.Message}", 1);
+            }
+        }
+    }
+    
+    // Message classes for network communication
+    public class CommandMessage
+    {
+        public string Type { get; set; }
+        public string Command { get; set; }
+        public Dictionary<string, object> Data { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class FollowerMessage
+    {
+        public string Type { get; set; }
+        public string Data { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class DiscoveryMessage
+    {
+        public string Type { get; set; }
+        public string LeaderName { get; set; }
+        public string IpAddress { get; set; }
+        public int Port { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 }
