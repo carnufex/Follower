@@ -368,8 +368,8 @@ namespace Follower
         {
             try
             {
-                var inventory = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                return inventory?.InventoryItems?.ToList() ?? new List<Entity>();
+                var inventory = _gameController.Game.IngameState?.Data?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
+                return inventory?.InventorySlotItems?.Select(item => item.Item).ToList() ?? new List<Entity>();
             }
             catch
             {
@@ -438,14 +438,13 @@ namespace Follower
             try
             {
                 // Get item position in inventory
-                var inventoryElement = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                var itemElement = inventoryElement?.InventoryItems?.FirstOrDefault(i => i.Id == item.Id);
+                var inventory = _gameController.Game.IngameState?.Data?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
+                var inventoryItem = inventory?.InventorySlotItems?.FirstOrDefault(i => i.Item.Id == item.Id);
                 
-                if (itemElement == null) return false;
+                if (inventoryItem == null) return false;
                 
-                // Get item screen position
-                var itemRect = itemElement.GetClientRect();
-                var itemPos = itemRect.Center;
+                // Get item screen position from inventory slot
+                var itemPos = inventoryItem.GetClientRect().Center;
                 
                 // Move mouse to item
                 Mouse.SetCursorPos(itemPos);
@@ -668,13 +667,12 @@ namespace Follower
         {
             try
             {
-                var inventoryElement = _gameController.Game.IngameState.IngameUi.InventoryPanel;
-                var itemElement = inventoryElement?.InventoryItems?.FirstOrDefault(i => i.Id == item.Id);
+                var inventory = _gameController.Game.IngameState?.Data?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
+                var inventoryItem = inventory?.InventorySlotItems?.FirstOrDefault(i => i.Item.Id == item.Id);
                 
-                if (itemElement == null) return false;
+                if (inventoryItem == null) return false;
                 
-                var itemRect = itemElement.GetClientRect();
-                var itemPos = itemRect.Center;
+                var itemPos = inventoryItem.GetClientRect().Center;
                 
                 // Move mouse to item
                 Mouse.SetCursorPos(itemPos);
