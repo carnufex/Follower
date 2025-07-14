@@ -431,8 +431,8 @@ namespace Follower
                     Mouse.SetCursorPos(screenPos);
                     await Task.Delay(_random.Next(100, 200));
                     
-                    // Right-click to open
-                    Mouse.RightClick(100);
+                    // Left-click to open stash
+                    Mouse.LeftClick(100);
                     await Task.Delay(_random.Next(300, 500));
                     
                     // Wait for stash to open with multiple checks
