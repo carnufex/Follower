@@ -3197,7 +3197,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         private void CheckLeaderCommands()
         {
             if (!Settings.EnableLeaderCommands.Value)
+            {
+                // Log once that commands are disabled (to help with troubleshooting)
+                if (DateTime.Now - _lastCommandCheckTime > TimeSpan.FromMinutes(1))
+                {
+                    LogMessage("Leader commands are disabled in settings", 4);
+                    _lastCommandCheckTime = DateTime.Now;
+                }
                 return;
+            }
                 
             var now = DateTime.Now;
             
@@ -3246,6 +3254,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     return;
                     
                 // Execute the command
+                LogMessage($"Received leader command: {commandMessage.Command} - attempting to execute", 4);
+                
                 if (ExecuteLeaderCommand(commandMessage))
                 {
                     _currentCommand = commandMessage.Command;
@@ -3253,7 +3263,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     _commandStartTime = now;
                     _processedCommands.Add(commandMessage.Command);
                     
-                    LogMessage($"Executing leader command: {commandMessage.Command}", 4);
+                    LogMessage($"Successfully started executing leader command: {commandMessage.Command}", 4);
                     
                     // Send completion acknowledgment
                     _ = Task.Run(async () =>

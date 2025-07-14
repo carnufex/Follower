@@ -37,7 +37,7 @@ namespace Follower
         }
         
         /// <summary>
-        /// Executes a stash command with comprehensive inventory management
+        /// Executes a stash command by simulating the stash key press
         /// </summary>
         public async Task<CommandResult> ExecuteStashCommand(Dictionary<string, object> commandData)
         {
@@ -61,31 +61,15 @@ namespace Follower
                     {
                         _logger.LogCommandEvent("STASH_ITEMS", "STARTED", null, commandData);
                         
-                        // Parse command data
-                        var stashConfig = ParseStashConfiguration(commandData);
+                        // Execute the stash command by simulating the key press
+                        var stashResult = await ExecuteStashKeyPress();
                         
-                        // Find and validate stash
-                        var stash = await FindNearbyStash();
-                        if (stash == null)
-                            return CommandResult.Failed("No stash found nearby");
-                        
-                        // Open stash
-                        var stashOpened = await OpenStash(stash);
-                        if (!stashOpened)
-                            return CommandResult.Failed("Failed to open stash");
-                        
-                        // Execute stashing operations
-                        var stashingResult = await ExecuteStashingOperations(stashConfig);
-                        
-                        // Close stash
-                        await CloseStash();
-                        
-                        var result = stashingResult.IsSuccess ? 
-                            CommandResult.Success($"Stashed {stashingResult.ItemsProcessed} items") :
-                            CommandResult.Failed(stashingResult.ErrorMessage);
+                        var result = stashResult ? 
+                            CommandResult.Success("Stash command executed successfully") :
+                            CommandResult.Failed("Failed to execute stash command");
                         
                         _logger.LogCommandEvent("STASH_ITEMS", result.IsSuccess ? "SUCCESS" : "FAILED", 
-                            stopwatch.Elapsed, stashingResult, result.ErrorMessage);
+                            stopwatch.Elapsed, new { KeyPressed = "StashKey" }, result.ErrorMessage);
                         
                         return result;
                     }
@@ -103,7 +87,7 @@ namespace Follower
         }
         
         /// <summary>
-        /// Executes a sell command with intelligent vendor interaction
+        /// Executes a sell command by simulating the sell key press
         /// </summary>
         public async Task<CommandResult> ExecuteSellCommand(Dictionary<string, object> commandData)
         {
@@ -127,31 +111,15 @@ namespace Follower
                     {
                         _logger.LogCommandEvent("SELL_ITEMS", "STARTED", null, commandData);
                         
-                        // Parse command data
-                        var sellConfig = ParseSellConfiguration(commandData);
+                        // Execute the sell command by simulating the key press  
+                        var sellResult = await ExecuteSellKeyPress();
                         
-                        // Find and validate vendor
-                        var vendor = await FindNearbyVendor();
-                        if (vendor == null)
-                            return CommandResult.Failed("No vendor found nearby");
-                        
-                        // Open vendor window
-                        var vendorOpened = await OpenVendor(vendor);
-                        if (!vendorOpened)
-                            return CommandResult.Failed("Failed to open vendor window");
-                        
-                        // Execute selling operations
-                        var sellingResult = await ExecuteSellingOperations(sellConfig);
-                        
-                        // Close vendor window
-                        await CloseVendor();
-                        
-                        var result = sellingResult.IsSuccess ? 
-                            CommandResult.Success($"Sold {sellingResult.ItemsProcessed} items for {sellingResult.CurrencyEarned} currency") :
-                            CommandResult.Failed(sellingResult.ErrorMessage);
+                        var result = sellResult ? 
+                            CommandResult.Success("Sell command executed successfully") :
+                            CommandResult.Failed("Failed to execute sell command");
                         
                         _logger.LogCommandEvent("SELL_ITEMS", result.IsSuccess ? "SUCCESS" : "FAILED", 
-                            stopwatch.Elapsed, sellingResult, result.ErrorMessage);
+                            stopwatch.Elapsed, new { KeyPressed = "SellKey" }, result.ErrorMessage);
                         
                         return result;
                     }
@@ -169,7 +137,7 @@ namespace Follower
         }
         
         /// <summary>
-        /// Executes a trade command with security validation
+        /// Executes a trade command by simulating the trade accept key press
         /// </summary>
         public async Task<CommandResult> ExecuteTradeCommand(Dictionary<string, object> commandData)
         {
@@ -193,28 +161,15 @@ namespace Follower
                     {
                         _logger.LogCommandEvent("ACCEPT_TRADE", "STARTED", null, commandData);
                         
-                        // Parse command data
-                        var tradeConfig = ParseTradeConfiguration(commandData);
+                        // Execute the trade accept command by simulating the key press
+                        var tradeResult = await ExecuteTradeAcceptKeyPress();
                         
-                        // Validate trade request
-                        var tradeRequest = GetActiveTradeRequest();
-                        if (tradeRequest == null)
-                            return CommandResult.Failed("No active trade request found");
-                        
-                        // Security validation
-                        var validationResult = await ValidateTradeRequest(tradeRequest, tradeConfig);
-                        if (!validationResult.IsValid)
-                            return CommandResult.Failed($"Trade validation failed: {validationResult.Reason}");
-                        
-                        // Execute trade operations
-                        var tradeResult = await ExecuteTradeOperations(tradeRequest, tradeConfig);
-                        
-                        var result = tradeResult.IsSuccess ? 
-                            CommandResult.Success($"Trade completed successfully") :
-                            CommandResult.Failed(tradeResult.ErrorMessage);
+                        var result = tradeResult ? 
+                            CommandResult.Success("Trade accept command executed successfully") :
+                            CommandResult.Failed("Failed to execute trade accept command");
                         
                         _logger.LogCommandEvent("ACCEPT_TRADE", result.IsSuccess ? "SUCCESS" : "FAILED", 
-                            stopwatch.Elapsed, tradeResult, result.ErrorMessage);
+                            stopwatch.Elapsed, new { KeyPressed = "TradeAcceptKey" }, result.ErrorMessage);
                         
                         return result;
                     }
@@ -228,6 +183,102 @@ namespace Follower
             {
                 _logger.LogError($"Error executing trade command: {ex.Message}", ex, "trade_command");
                 return CommandResult.Failed($"Command execution failed: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// Executes the stash key press (F10 or whatever key is configured)
+        /// </summary>
+        private async Task<bool> ExecuteStashKeyPress()
+        {
+            try
+            {
+                var stashKey = _settings.StashCommandKey.Value;
+                
+                _logger.LogCommandEvent("STASH_KEY_PRESS", "STARTING", null, new { Key = stashKey.ToString() });
+                
+                await Task.Run(() =>
+                {
+                    // Press the configured stash key
+                    Input.KeyDown(stashKey);
+                    Thread.Sleep(50);
+                    Input.KeyUp(stashKey);
+                });
+                
+                // Wait a bit for the command to be processed
+                await Task.Delay(200);
+                
+                _logger.LogCommandEvent("STASH_KEY_PRESS", "EXECUTED", null, new { Key = stashKey.ToString() });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error executing stash key press: {ex.Message}", ex, "stash_key_press");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the sell key press (or whatever key is configured)
+        /// </summary>
+        private async Task<bool> ExecuteSellKeyPress()
+        {
+            try
+            {
+                var sellKey = _settings.SellCommandKey.Value;
+                
+                _logger.LogCommandEvent("SELL_KEY_PRESS", "STARTING", null, new { Key = sellKey.ToString() });
+                
+                await Task.Run(() =>
+                {
+                    // Press the configured sell key
+                    Input.KeyDown(sellKey);
+                    Thread.Sleep(50);
+                    Input.KeyUp(sellKey);
+                });
+                
+                // Wait a bit for the command to be processed
+                await Task.Delay(200);
+                
+                _logger.LogCommandEvent("SELL_KEY_PRESS", "EXECUTED", null, new { Key = sellKey.ToString() });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error executing sell key press: {ex.Message}", ex, "sell_key_press");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Executes the trade accept key press (or whatever key is configured)
+        /// </summary>
+        private async Task<bool> ExecuteTradeAcceptKeyPress()
+        {
+            try
+            {
+                var tradeKey = _settings.TradeAcceptKey.Value;
+                
+                _logger.LogCommandEvent("TRADE_ACCEPT_KEY_PRESS", "STARTING", null, new { Key = tradeKey.ToString() });
+                
+                await Task.Run(() =>
+                {
+                    // Press the configured trade accept key
+                    Input.KeyDown(tradeKey);
+                    Thread.Sleep(50);
+                    Input.KeyUp(tradeKey);
+                });
+                
+                // Wait a bit for the command to be processed
+                await Task.Delay(200);
+                
+                _logger.LogCommandEvent("TRADE_ACCEPT_KEY_PRESS", "EXECUTED", null, new { Key = tradeKey.ToString() });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error executing trade accept key press: {ex.Message}", ex, "trade_accept_key_press");
+                return false;
             }
         }
         

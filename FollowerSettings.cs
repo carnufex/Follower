@@ -98,17 +98,20 @@ public class FollowerSettings : ISettings
     [Menu("Network Communication/Heartbeat Interval (ms)")] public RangeNode<int> HeartbeatInterval { get; set; } = new RangeNode<int>(10000, 5000, 60000);
     
     // Commands & Execution
-    [Menu("Commands & Execution/Enable Leader Commands")] public ToggleNode EnableLeaderCommands { get; set; } = new ToggleNode(false);
+    [Menu("Commands & Execution/Enable Leader Commands")] public ToggleNode EnableLeaderCommands { get; set; } = new ToggleNode(true);
     [Menu("Commands & Execution/Leader Commands Check Interval (ms)")] public RangeNode<int> LeaderCommandsCheckInterval { get; set; } = new RangeNode<int>(1000, 500, 5000);
     [Menu("Commands & Execution/Execute Commands While Following")] public ToggleNode ExecuteCommandsWhileFollowing { get; set; } = new ToggleNode(true);
     [Menu("Commands & Execution/Max Command Execution Time (ms)")] public RangeNode<int> MaxCommandExecutionTime { get; set; } = new RangeNode<int>(60000, 10000, 300000);
     [Menu("Commands & Execution/Enable Stashing Commands")] public ToggleNode EnableStashingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Commands & Execution/Stash Command Key")] public HotkeyNode StashCommandKey { get; set; } = Keys.F10;
     [Menu("Commands & Execution/Stash Tab Switch Delay (ms)")] public RangeNode<int> StashTabSwitchDelay { get; set; } = new RangeNode<int>(200, 50, 1000);
     [Menu("Commands & Execution/Item Placement Delay (ms)")] public RangeNode<int> ItemPlacementDelay { get; set; } = new RangeNode<int>(100, 50, 500);
     [Menu("Commands & Execution/Enable Selling Commands")] public ToggleNode EnableSellingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Commands & Execution/Sell Command Key")] public HotkeyNode SellCommandKey { get; set; } = Keys.F11;
     [Menu("Commands & Execution/Vendor Interaction Delay (ms)")] public RangeNode<int> VendorInteractionDelay { get; set; } = new RangeNode<int>(300, 100, 1000);
     [Menu("Commands & Execution/Item Sell Delay (ms)")] public RangeNode<int> ItemSellDelay { get; set; } = new RangeNode<int>(150, 50, 500);
     [Menu("Commands & Execution/Enable Trading Commands")] public ToggleNode EnableTradingCommands { get; set; } = new ToggleNode(true);
+    [Menu("Commands & Execution/Trade Accept Key")] public HotkeyNode TradeAcceptKey { get; set; } = Keys.F12;
     [Menu("Commands & Execution/Trade Request Timeout (ms)")] public RangeNode<int> TradeRequestTimeout { get; set; } = new RangeNode<int>(15000, 5000, 60000);
     [Menu("Commands & Execution/Trade Window Delay (ms)")] public RangeNode<int> TradeWindowDelay { get; set; } = new RangeNode<int>(500, 100, 2000);
     
