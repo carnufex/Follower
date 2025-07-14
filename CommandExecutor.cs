@@ -37,7 +37,7 @@ namespace Follower
         }
         
         /// <summary>
-        /// Executes a stash command by simulating the stash key press
+        /// Executes a stash command with comprehensive inventory management
         /// </summary>
         public async Task<CommandResult> ExecuteStashCommand(Dictionary<string, object> commandData)
         {
@@ -61,15 +61,31 @@ namespace Follower
                     {
                         _logger.LogCommandEvent("STASH_ITEMS", "STARTED", null, commandData);
                         
-                        // Execute the stash command by simulating the key press
-                        var stashResult = await ExecuteStashKeyPress();
+                        // Parse command data
+                        var stashConfig = ParseStashConfiguration(commandData);
                         
-                        var result = stashResult ? 
-                            CommandResult.Success("Stash command executed successfully") :
-                            CommandResult.Failed("Failed to execute stash command");
+                        // Find and validate stash
+                        var stash = await FindNearbyStash();
+                        if (stash == null)
+                            return CommandResult.Failed("No stash found nearby");
+                        
+                        // Open stash
+                        var stashOpened = await OpenStash(stash);
+                        if (!stashOpened)
+                            return CommandResult.Failed("Failed to open stash");
+                        
+                        // Execute stashing operations
+                        var stashingResult = await ExecuteStashingOperations(stashConfig);
+                        
+                        // Close stash
+                        await CloseStash();
+                        
+                        var result = stashingResult.IsSuccess ? 
+                            CommandResult.Success($"Stashed {stashingResult.ItemsProcessed} items") :
+                            CommandResult.Failed(stashingResult.ErrorMessage);
                         
                         _logger.LogCommandEvent("STASH_ITEMS", result.IsSuccess ? "SUCCESS" : "FAILED", 
-                            stopwatch.Elapsed, new { KeyPressed = "StashKey" }, result.ErrorMessage);
+                            stopwatch.Elapsed, stashingResult, result.ErrorMessage);
                         
                         return result;
                     }
@@ -313,12 +329,60 @@ namespace Follower
         {
             return await Task.Run(() =>
             {
-                var playerPos = _gameController.Player.Pos;
-                return _gameController.EntityListWrapper.Entities
-                    .Where(e => e.Type == EntityType.Stash)
-                    .Where(e => Vector3.Distance(playerPos, e.Pos) < 200)
-                    .OrderBy(e => Vector3.Distance(playerPos, e.Pos))
-                    .FirstOrDefault();
+                try
+                {
+                    var playerPos = _gameController.Player.Pos;
+                    _logger.LogCommandEvent("FIND_STASH", "SEARCHING", null, new { PlayerPos = playerPos });
+                    
+                    // Look for stash entities within 300 units (increased from 200)
+                    var stashEntities = _gameController.EntityListWrapper.Entities
+                        .Where(e => e.Type == EntityType.Stash)
+                        .Where(e => e.IsValid && e.IsTargetable)
+                        .Where(e => Vector3.Distance(playerPos, e.Pos) < 300)
+                        .OrderBy(e => Vector3.Distance(playerPos, e.Pos))
+                        .ToList();
+                    
+                    // Also check for entities that might be named "Stash" or similar
+                    var namedStashEntities = _gameController.EntityListWrapper.Entities
+                        .Where(e => e.RenderName != null && e.RenderName.Contains("Stash"))
+                        .Where(e => e.IsValid && e.IsTargetable)
+                        .Where(e => Vector3.Distance(playerPos, e.Pos) < 300)
+                        .OrderBy(e => Vector3.Distance(playerPos, e.Pos))
+                        .ToList();
+                    
+                    // Combine and get the closest
+                    var allStashEntities = stashEntities.Concat(namedStashEntities).Distinct().ToList();
+                    
+                    _logger.LogCommandEvent("FIND_STASH", "RESULTS", null, new { 
+                        TypedStashes = stashEntities.Count,
+                        NamedStashes = namedStashEntities.Count,
+                        TotalFound = allStashEntities.Count
+                    });
+                    
+                    var nearestStash = allStashEntities.FirstOrDefault();
+                    
+                    if (nearestStash != null)
+                    {
+                        var distance = Vector3.Distance(playerPos, nearestStash.Pos);
+                        _logger.LogCommandEvent("FIND_STASH", "FOUND", null, new { 
+                            EntityType = nearestStash.Type,
+                            RenderName = nearestStash.RenderName,
+                            Distance = distance,
+                            Position = nearestStash.Pos
+                        });
+                    }
+                    else
+                    {
+                        _logger.LogCommandEvent("FIND_STASH", "NOT_FOUND", null, new { SearchRadius = 300 });
+                    }
+                    
+                    return nearestStash;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Error finding stash: {ex.Message}", ex, "find_stash");
+                    return null;
+                }
             });
         }
         
@@ -328,35 +392,79 @@ namespace Follower
             {
                 try
                 {
+                    _logger.LogCommandEvent("OPEN_STASH", "STARTING", null, new { 
+                        StashType = stash.Type,
+                        StashName = stash.RenderName,
+                        StashPos = stash.Pos
+                    });
+                    
+                    // Check if stash is already open
+                    if (IsStashOpen())
+                    {
+                        _logger.LogCommandEvent("OPEN_STASH", "ALREADY_OPEN", null, null);
+                        return true;
+                    }
+                    
+                    // Move closer to stash if needed
+                    var playerPos = _gameController.Player.Pos;
+                    var stashDistance = Vector3.Distance(playerPos, stash.Pos);
+                    
+                    if (stashDistance > 150)
+                    {
+                        _logger.LogCommandEvent("OPEN_STASH", "TOO_FAR", null, new { Distance = stashDistance });
+                        return false; // Too far to interact
+                    }
+                    
                     // Click on stash
                     var stashPos = _gameController.Game.IngameState.Camera.WorldToScreen(stash.Pos);
                     var screenPos = new Vector2(stashPos.X, stashPos.Y);
                     
                     // Add random offset for natural mouse movement
-                    screenPos.X += _random.Next(-10, 10);
-                    screenPos.Y += _random.Next(-10, 10);
+                    screenPos.X += _random.Next(-15, 15);
+                    screenPos.Y += _random.Next(-15, 15);
+                    
+                    _logger.LogCommandEvent("OPEN_STASH", "CLICKING", null, new { 
+                        WorldPos = stash.Pos,
+                        ScreenPos = screenPos
+                    });
                     
                     Mouse.SetCursorPos(screenPos);
                     await Task.Delay(_random.Next(100, 200));
                     
                     // Right-click to open
-                                            Mouse.RightClick(100);
-                    await Task.Delay(_random.Next(200, 400));
+                    Mouse.RightClick(100);
+                    await Task.Delay(_random.Next(300, 500));
                     
-                    // Wait for stash to open
-                    var timeout = DateTime.Now.AddSeconds(5);
+                    // Wait for stash to open with multiple checks
+                    var timeout = DateTime.Now.AddSeconds(8);
+                    var checkCount = 0;
+                    
                     while (DateTime.Now < timeout)
                     {
+                        checkCount++;
+                        
                         if (IsStashOpen())
+                        {
+                            _logger.LogCommandEvent("OPEN_STASH", "SUCCESS", null, new { 
+                                ChecksRequired = checkCount,
+                                TimeElapsed = (DateTime.Now - timeout.AddSeconds(-8)).TotalMilliseconds
+                            });
                             return true;
-                        await Task.Delay(100);
+                        }
+                        
+                        await Task.Delay(200);
                     }
+                    
+                    _logger.LogCommandEvent("OPEN_STASH", "TIMEOUT", null, new { 
+                        ChecksPerformed = checkCount,
+                        TimeoutSeconds = 8
+                    });
                     
                     return false;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"Error opening stash: {ex.Message}", ex);
+                    _logger.LogError($"Error opening stash: {ex.Message}", ex, "open_stash");
                     return false;
                 }
             });
@@ -381,15 +489,27 @@ namespace Follower
             
             try
             {
+                _logger.LogCommandEvent("STASHING_OPERATIONS", "STARTING", null, config);
+                
                 var inventory = _gameController.Game.IngameState.IngameUi.InventoryPanel;
                 if (inventory == null || !inventory.IsVisible)
                 {
                     result.ErrorMessage = "Inventory not accessible";
+                    _logger.LogCommandEvent("STASHING_OPERATIONS", "INVENTORY_NOT_ACCESSIBLE", null, new { 
+                        InventoryNull = inventory == null,
+                        InventoryVisible = inventory?.IsVisible ?? false
+                    });
                     return result;
                 }
                 
                 var inventoryItems = GetInventoryItems();
                 var itemsToStash = FilterItemsForStashing(inventoryItems, config);
+                
+                _logger.LogCommandEvent("STASHING_OPERATIONS", "FILTERED_ITEMS", null, new { 
+                    TotalItems = inventoryItems.Count,
+                    ItemsToStash = itemsToStash.Count,
+                    ItemsToStashNames = itemsToStash.Take(5).Select(i => i.GetComponent<Base>()?.Name ?? "Unknown").ToList()
+                });
                 
                 foreach (var item in itemsToStash)
                 {
@@ -406,11 +526,19 @@ namespace Follower
                 }
                 
                 result.IsSuccess = result.ItemsProcessed > 0;
+                
+                _logger.LogCommandEvent("STASHING_OPERATIONS", "COMPLETED", null, new { 
+                    ItemsProcessed = result.ItemsProcessed,
+                    FailedItems = result.FailedItems.Count,
+                    IsSuccess = result.IsSuccess
+                });
+                
                 return result;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
+                _logger.LogError($"Error in stashing operations: {ex.Message}", ex, "stashing_operations");
                 return result;
             }
         }
@@ -419,11 +547,27 @@ namespace Follower
         {
             try
             {
+                _logger.LogCommandEvent("GET_INVENTORY_ITEMS", "STARTING", null, null);
+                
                 var inventory = _gameController.Game.IngameState?.Data?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
-                return inventory?.InventorySlotItems?.Select(item => item.Item).ToList() ?? new List<Entity>();
+                if (inventory == null)
+                {
+                    _logger.LogCommandEvent("GET_INVENTORY_ITEMS", "NO_INVENTORY", null, null);
+                    return new List<Entity>();
+                }
+                
+                var inventoryItems = inventory.InventorySlotItems?.Select(item => item.Item).ToList() ?? new List<Entity>();
+                
+                _logger.LogCommandEvent("GET_INVENTORY_ITEMS", "FOUND_ITEMS", null, new { 
+                    ItemCount = inventoryItems.Count,
+                    ItemNames = inventoryItems.Take(5).Select(i => i.GetComponent<Base>()?.Name ?? "Unknown").ToList()
+                });
+                
+                return inventoryItems;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError($"Error getting inventory items: {ex.Message}", ex, "get_inventory_items");
                 return new List<Entity>();
             }
         }
@@ -488,14 +632,37 @@ namespace Follower
         {
             try
             {
+                _logger.LogCommandEvent("STASH_SINGLE_ITEM", "STARTING", null, new { 
+                    ItemId = item.Id,
+                    ItemName = item.GetComponent<Base>()?.Name ?? "Unknown"
+                });
+                
                 // Get item position in inventory
                 var inventory = _gameController.Game.IngameState?.Data?.ServerData?.PlayerInventories?.FirstOrDefault()?.Inventory;
-                var inventoryItem = inventory?.InventorySlotItems?.FirstOrDefault(i => i.Item.Id == item.Id);
+                if (inventory == null)
+                {
+                    _logger.LogCommandEvent("STASH_SINGLE_ITEM", "NO_INVENTORY", null, null);
+                    return false;
+                }
                 
-                if (inventoryItem == null) return false;
+                var inventoryItem = inventory.InventorySlotItems?.FirstOrDefault(i => i.Item.Id == item.Id);
+                if (inventoryItem == null)
+                {
+                    _logger.LogCommandEvent("STASH_SINGLE_ITEM", "ITEM_NOT_FOUND_IN_INVENTORY", null, new { 
+                        ItemId = item.Id,
+                        InventoryItemsCount = inventory.InventorySlotItems?.Count ?? 0
+                    });
+                    return false;
+                }
                 
                 // Get item screen position from inventory slot
-                var itemPos = inventoryItem.GetClientRect().Center;
+                var itemRect = inventoryItem.GetClientRect();
+                var itemPos = itemRect.Center;
+                
+                _logger.LogCommandEvent("STASH_SINGLE_ITEM", "CLICKING_ITEM", null, new { 
+                    ItemPos = itemPos,
+                    ItemRect = itemRect
+                });
                 
                 // Move mouse to item
                 Mouse.SetCursorPos(itemPos);
@@ -511,11 +678,16 @@ namespace Follower
                 // Wait for item to be stashed
                 await Task.Delay(_settings.ItemPlacementDelay.Value);
                 
+                _logger.LogCommandEvent("STASH_SINGLE_ITEM", "SUCCESS", null, new { 
+                    ItemId = item.Id,
+                    PlacementDelay = _settings.ItemPlacementDelay.Value
+                });
+                
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error stashing item: {ex.Message}", ex);
+                _logger.LogError($"Error stashing item: {ex.Message}", ex, "stash_single_item");
                 return false;
             }
         }
