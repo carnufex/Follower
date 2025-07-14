@@ -766,49 +766,41 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         try
         {
             // Check if PickItV2 plugin is loaded
-            var pickItPlugin = GameController.PluginManager.Plugins.FirstOrDefault(p => p.PluginName == "PickItV2");
-            if (pickItPlugin?.Plugin == null)
-                return false;
-
-            // Use reflection to access PickItV2's internal state
-            var pickItType = pickItPlugin.Plugin.GetType();
-            var settingsField = pickItType.GetField("Settings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            if (settingsField?.GetValue(pickItPlugin.Plugin) is not object settings)
-                return false;
-
-            // Get the Enable property
-            var enableProperty = settings.GetType().GetProperty("Enable");
-            if (enableProperty?.GetValue(settings) is not object enableNode)
-                return false;
-
-            // Check if PickItV2 is enabled
-            var valueProperty = enableNode.GetType().GetProperty("Value");
-            if (valueProperty?.GetValue(enableNode) is not bool isEnabled || !isEnabled)
-                return false;
-
-            // Check if PickItV2 has pending work
-            var workingField = pickItType.GetField("_working", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (workingField?.GetValue(pickItPlugin.Plugin) is bool working && working)
+            // Use the existing plugin bridge approach instead of PluginManager
+            var pickItIsActiveMethod = GameController.PluginBridge.GetMethod<Func<bool>>("PickIt.IsActive");
+            if (pickItIsActiveMethod != null)
             {
-                // PickItV2 is actively working, yield control
-                if (_pickItV2YieldStartTime == DateTime.MinValue)
-                    _pickItV2YieldStartTime = DateTime.Now;
+                bool isActive = pickItIsActiveMethod();
                 
-                // Check timeout
-                if (DateTime.Now - _pickItV2YieldStartTime > TimeSpan.FromMilliseconds(Settings.PickItV2YieldTimeout.Value))
+                // Track when we started yielding to implement timeout
+                if (isActive)
                 {
+                    if (_pickItV2YieldStartTime == DateTime.MinValue)
+                    {
+                        _pickItV2YieldStartTime = DateTime.Now;
+                    }
+                    else
+                    {
+                        // Check if we've been yielding too long
+                        var yieldDuration = DateTime.Now - _pickItV2YieldStartTime;
+                        if (yieldDuration.TotalMilliseconds > Settings.PickItV2YieldTimeout.Value)
+                        {
+                            // Reset the yield timer and continue with follower actions
+                            _pickItV2YieldStartTime = DateTime.MinValue;
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    // Reset the yield timer when PickItV2 is not active
                     _pickItV2YieldStartTime = DateTime.MinValue;
-                    return false; // Timeout reached, resume follower
                 }
                 
-                return true;
+                return isActive;
             }
-            else
-            {
-                _pickItV2YieldStartTime = DateTime.MinValue;
-                return false;
-            }
+            
+            return false;
         }
         catch (Exception ex)
         {
@@ -856,65 +848,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 }
             }
             
-            // Fallback to reflection-based detection if plugin bridge is not available
-            var reAgentPlugin = GameController.PluginManager.Plugins.FirstOrDefault(p => p.PluginName == "ReAgent");
-            if (reAgentPlugin?.Plugin == null)
-                return false;
-
-            // Use reflection to access ReAgent's internal state
-            var reAgentType = reAgentPlugin.Plugin.GetType();
-            var settingsField = reAgentType.GetField("Settings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            if (settingsField?.GetValue(reAgentPlugin.Plugin) is not object settings)
-                return false;
-
-            // Get the Enable property
-            var enableProperty = settings.GetType().GetProperty("Enable");
-            if (enableProperty?.GetValue(settings) is not object enableNode)
-                return false;
-
-            // Check if ReAgent is enabled
-            var valueProperty = enableNode.GetType().GetProperty("Value");
-            if (valueProperty?.GetValue(enableNode) is not bool isEnabled || !isEnabled)
-                return false;
-
-            // Check if ReAgent has pending side effects
-            var pendingSideEffectsField = reAgentType.GetField("_pendingSideEffects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (pendingSideEffectsField?.GetValue(reAgentPlugin.Plugin) is System.Collections.IList pendingSideEffects)
-            {
-                if (pendingSideEffects.Count > 0)
-                {
-                    // ReAgent has pending actions, yield control
-                    if (_reAgentYieldStartTime == DateTime.MinValue)
-                        _reAgentYieldStartTime = DateTime.Now;
-                    
-                    // Check timeout
-                    if (DateTime.Now - _reAgentYieldStartTime > TimeSpan.FromMilliseconds(Settings.ReAgentYieldTimeout.Value))
-                    {
-                        _reAgentYieldStartTime = DateTime.MinValue;
-                        return false; // Timeout reached, resume follower
-                    }
-                    
-                    return true;
-                }
-                else
-                {
-                    _reAgentYieldStartTime = DateTime.MinValue;
-                    return false;
-                }
-            }
-
-            // Check if ReAgent recently processed an action (within the last 200ms)
-            var sinceLastKeyPressField = reAgentType.GetField("_sinceLastKeyPress", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (sinceLastKeyPressField?.GetValue(reAgentPlugin.Plugin) is System.Diagnostics.Stopwatch stopwatch)
-            {
-                if (stopwatch.ElapsedMilliseconds < 200)
-                {
-                    _lastReAgentActionTime = DateTime.Now;
-                    return true; // ReAgent recently acted, yield briefly
-                }
-            }
-
+            // Return false if plugin bridge is not available
             return false;
         }
         catch (Exception ex)
@@ -3235,7 +3169,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 if (distance < 30) // 30 pixel threshold
                 {
                     // Adjust position to avoid the item
-                    var avoidanceDirection = (screenPos - labelScreenPos).Normalized();
+                    var direction = screenPos - labelScreenPos;
+                    var length = (float)Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y);
+                    var avoidanceDirection = length > 0 ? new Vector2(direction.X / length, direction.Y / length) : new Vector2(1, 0);
                     var adjustedPos = labelScreenPos + avoidanceDirection * 40; // Move 40 pixels away
                     
                     // Make sure adjusted position is still within game window
