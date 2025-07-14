@@ -84,6 +84,9 @@ public class FollowerSettings : ISettings
     [Menu("Plugin Integration/Yield to PickItV2")] public ToggleNode YieldToPickItV2 { get; set; } = new ToggleNode(false);
     [Menu("Plugin Integration/PickItV2 Yield Timeout (ms)")] public RangeNode<int> PickItV2YieldTimeout { get; set; } = new RangeNode<int>(5000, 1000, 15000);
     [Menu("Plugin Integration/Enable Coroutine Monitoring")] public ToggleNode EnableCoroutineMonitoring { get; set; } = new ToggleNode(true);
+    [Menu("Plugin Integration/Yield to ReAgent")] public ToggleNode YieldToReAgent { get; set; } = new ToggleNode(true);
+    [Menu("Plugin Integration/ReAgent Yield Timeout (ms)")] public RangeNode<int> ReAgentYieldTimeout { get; set; } = new RangeNode<int>(2000, 500, 5000);
+    [Menu("Plugin Integration/ReAgent Coordination Mode")] public ToggleNode ReAgentCoordinationMode { get; set; } = new ToggleNode(true);
     
     // Network Communication
     [Menu("Network Communication/Enable Network Communication")] public ToggleNode EnableNetworkCommunication { get; set; } = new ToggleNode(false);

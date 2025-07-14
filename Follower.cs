@@ -59,6 +59,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     // PickItV2 coordination variables
     private DateTime _pickItV2YieldStartTime = DateTime.MinValue;
     
+    // ReAgent coordination
+    private DateTime _reAgentYieldStartTime = DateTime.MinValue;
+    private DateTime _lastReAgentActionTime = DateTime.MinValue;
+    
     // Coroutine variables
     private Coroutine _followerCoroutine;
     private Coroutine _postTransitionCoroutine;
@@ -145,6 +149,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
         // Initialize advanced infrastructure components
         InitializeAdvancedInfrastructure();
+
+        // Initialize PluginBridge for shared utilities
+        InitializeSharedUtilities();
 
         // Start network services if enabled
         if (Settings.EnableNetworkCommunication.Value)
@@ -749,59 +756,181 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
 
     /// <summary>
-    /// Checks if PickItV2 is currently active and picking up items
+    /// Checks if PickItV2 is active and we should yield control to it
     /// </summary>
-    /// <returns>True if PickItV2 is active and we should yield control</returns>
     private bool IsPickItV2Active()
     {
         if (!Settings.YieldToPickItV2.Value)
             return false;
-            
+
         try
         {
-            // Try to get the PickItV2 plugin status through the plugin bridge
-            var pickItIsActiveMethod = GameController.PluginBridge.GetMethod<Func<bool>>("PickIt.IsActive");
+            // Check if PickItV2 plugin is loaded
+            var pickItPlugin = GameController.PluginManager.Plugins.FirstOrDefault(p => p.PluginName == "PickItV2");
+            if (pickItPlugin?.Plugin == null)
+                return false;
+
+            // Use reflection to access PickItV2's internal state
+            var pickItType = pickItPlugin.Plugin.GetType();
+            var settingsField = pickItType.GetField("Settings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             
-            if (pickItIsActiveMethod != null)
+            if (settingsField?.GetValue(pickItPlugin.Plugin) is not object settings)
+                return false;
+
+            // Get the Enable property
+            var enableProperty = settings.GetType().GetProperty("Enable");
+            if (enableProperty?.GetValue(settings) is not object enableNode)
+                return false;
+
+            // Check if PickItV2 is enabled
+            var valueProperty = enableNode.GetType().GetProperty("Value");
+            if (valueProperty?.GetValue(enableNode) is not bool isEnabled || !isEnabled)
+                return false;
+
+            // Check if PickItV2 has pending work
+            var workingField = pickItType.GetField("_working", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (workingField?.GetValue(pickItPlugin.Plugin) is bool working && working)
             {
-                bool isActive = pickItIsActiveMethod();
+                // PickItV2 is actively working, yield control
+                if (_pickItV2YieldStartTime == DateTime.MinValue)
+                    _pickItV2YieldStartTime = DateTime.Now;
                 
-                // Track when we started yielding to implement timeout
-                if (isActive)
+                // Check timeout
+                if (DateTime.Now - _pickItV2YieldStartTime > TimeSpan.FromMilliseconds(Settings.PickItV2YieldTimeout.Value))
                 {
-                    if (_pickItV2YieldStartTime == DateTime.MinValue)
-                    {
-                        _pickItV2YieldStartTime = DateTime.Now;
-                    }
-                    else
-                    {
-                        // Check if we've been yielding too long
-                        var yieldDuration = DateTime.Now - _pickItV2YieldStartTime;
-                        if (yieldDuration.TotalMilliseconds > Settings.PickItV2YieldTimeout.Value)
-                        {
-                            // Reset the yield timer and continue with follower actions
-                            _pickItV2YieldStartTime = DateTime.MinValue;
-                            return false;
-                        }
-                    }
-                }
-                else
-                {
-                    // Reset the yield timer when PickItV2 is not active
                     _pickItV2YieldStartTime = DateTime.MinValue;
+                    return false; // Timeout reached, resume follower
                 }
                 
-                return isActive;
+                return true;
+            }
+            else
+            {
+                _pickItV2YieldStartTime = DateTime.MinValue;
+                return false;
             }
         }
         catch (Exception ex)
         {
-            // If we can't communicate with PickItV2, assume it's not active
-            // This prevents the follower from getting stuck if PickItV2 isn't loaded
+            // If we can't check PickItV2 state, assume it's not active
             _pickItV2YieldStartTime = DateTime.MinValue;
+            return false;
         }
-        
-        return false;
+    }
+
+    /// <summary>
+    /// Checks if ReAgent is active and we should yield control to it
+    /// </summary>
+    private bool IsReAgentActive()
+    {
+        if (!Settings.YieldToReAgent.Value)
+            return false;
+
+        try
+        {
+            // First try to use the plugin bridge method for more reliable communication
+            var reAgentIsActiveMethod = GameController.PluginBridge.GetMethod<Func<bool>>("ReAgent.IsActive");
+            if (reAgentIsActiveMethod != null)
+            {
+                bool isActive = reAgentIsActiveMethod();
+                
+                if (isActive)
+                {
+                    // ReAgent is actively processing, yield control
+                    if (_reAgentYieldStartTime == DateTime.MinValue)
+                        _reAgentYieldStartTime = DateTime.Now;
+                    
+                    // Check timeout
+                    if (DateTime.Now - _reAgentYieldStartTime > TimeSpan.FromMilliseconds(Settings.ReAgentYieldTimeout.Value))
+                    {
+                        _reAgentYieldStartTime = DateTime.MinValue;
+                        return false; // Timeout reached, resume follower
+                    }
+                    
+                    return true;
+                }
+                else
+                {
+                    _reAgentYieldStartTime = DateTime.MinValue;
+                    return false;
+                }
+            }
+            
+            // Fallback to reflection-based detection if plugin bridge is not available
+            var reAgentPlugin = GameController.PluginManager.Plugins.FirstOrDefault(p => p.PluginName == "ReAgent");
+            if (reAgentPlugin?.Plugin == null)
+                return false;
+
+            // Use reflection to access ReAgent's internal state
+            var reAgentType = reAgentPlugin.Plugin.GetType();
+            var settingsField = reAgentType.GetField("Settings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            
+            if (settingsField?.GetValue(reAgentPlugin.Plugin) is not object settings)
+                return false;
+
+            // Get the Enable property
+            var enableProperty = settings.GetType().GetProperty("Enable");
+            if (enableProperty?.GetValue(settings) is not object enableNode)
+                return false;
+
+            // Check if ReAgent is enabled
+            var valueProperty = enableNode.GetType().GetProperty("Value");
+            if (valueProperty?.GetValue(enableNode) is not bool isEnabled || !isEnabled)
+                return false;
+
+            // Check if ReAgent has pending side effects
+            var pendingSideEffectsField = reAgentType.GetField("_pendingSideEffects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (pendingSideEffectsField?.GetValue(reAgentPlugin.Plugin) is System.Collections.IList pendingSideEffects)
+            {
+                if (pendingSideEffects.Count > 0)
+                {
+                    // ReAgent has pending actions, yield control
+                    if (_reAgentYieldStartTime == DateTime.MinValue)
+                        _reAgentYieldStartTime = DateTime.Now;
+                    
+                    // Check timeout
+                    if (DateTime.Now - _reAgentYieldStartTime > TimeSpan.FromMilliseconds(Settings.ReAgentYieldTimeout.Value))
+                    {
+                        _reAgentYieldStartTime = DateTime.MinValue;
+                        return false; // Timeout reached, resume follower
+                    }
+                    
+                    return true;
+                }
+                else
+                {
+                    _reAgentYieldStartTime = DateTime.MinValue;
+                    return false;
+                }
+            }
+
+            // Check if ReAgent recently processed an action (within the last 200ms)
+            var sinceLastKeyPressField = reAgentType.GetField("_sinceLastKeyPress", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (sinceLastKeyPressField?.GetValue(reAgentPlugin.Plugin) is System.Diagnostics.Stopwatch stopwatch)
+            {
+                if (stopwatch.ElapsedMilliseconds < 200)
+                {
+                    _lastReAgentActionTime = DateTime.Now;
+                    return true; // ReAgent recently acted, yield briefly
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // If we can't check ReAgent state, assume it's not active
+            _reAgentYieldStartTime = DateTime.MinValue;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks if either plugin is active and we should yield control
+    /// </summary>
+    private bool ShouldYieldToOtherPlugins()
+    {
+        return IsPickItV2Active() || IsReAgentActive();
     }
 
     /// <summary>
@@ -811,14 +940,14 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// <returns>True if the action was executed, false if yielded to PickItV2</returns>
     private bool ExecuteMouseActionIfPossible(Action mouseAction)
     {
-        if (IsPickItV2Active())
+        if (ShouldYieldToOtherPlugins())
         {
-            // PickItV2 is active, yield control and delay our next action
+            // PickItV2 or ReAgent is active, yield control and delay our next action
             _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency.Value);
             return false;
         }
         
-        // PickItV2 is not active, execute the mouse action
+        // PickItV2 or ReAgent is not active, execute the mouse action
         mouseAction?.Invoke();
         return true;
     }
@@ -1098,25 +1227,53 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
     private void HandleNearbyLeader(float distanceFromFollower)
     {
-        // Clear all tasks except for looting/claim portal (as those only get done when we're within range of leader.)
+        // More aggressive task clearing when leader is nearby - clear ALL movement-related tasks
+        // This prevents the follower from continuing old paths when the leader is already close
         if (_tasks.Count > 0)
         {
+            var tasksToRemove = new List<int>();
             for (var i = _tasks.Count - 1; i >= 0; i--)
-                if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
-                    _tasks.RemoveAt(i);
-        }
-        else if (Settings.IsCloseFollowEnabled.Value)
-        {
-            // Close follow logic. We have no current tasks. Check if we should move towards leader
-            if (distanceFromFollower >= Settings.PathfindingNodeDistance.Value)
             {
-                // Check if we should avoid targeting the leader due to portal proximity
-                if (IsInPortalAvoidanceGracePeriod() && IsPositionTooCloseToPortal(_followTarget.Pos))
+                var task = _tasks[i];
+                if (task.Type == TaskNode.TaskNodeType.Movement || task.Type == TaskNode.TaskNodeType.Transition)
                 {
-                    // Leader is too close to portal during grace period, wait
-                    return;
+                    // Always remove old movement tasks when leader is nearby
+                    tasksToRemove.Add(i);
                 }
+                else if (task.Type == TaskNode.TaskNodeType.Loot)
+                {
+                    // Remove loot tasks that are far from current position (stale loot tasks)
+                    var taskDistance = Vector3.Distance(GameController.Player.Pos, task.WorldPosition);
+                    if (taskDistance > Settings.ClearPathDistance.Value)
+                    {
+                        tasksToRemove.Add(i);
+                    }
+                }
+            }
+            
+            // Remove the identified tasks
+            foreach (var index in tasksToRemove)
+            {
+                _tasks.RemoveAt(index);
+            }
+        }
+        
+        // Close follow logic - only add new movement task if we need to get closer
+        if (Settings.IsCloseFollowEnabled.Value && distanceFromFollower >= Settings.PathfindingNodeDistance.Value)
+        {
+            // Check if we should avoid targeting the leader due to portal proximity
+            if (IsInPortalAvoidanceGracePeriod() && IsPositionTooCloseToPortal(_followTarget.Pos))
+            {
+                // Leader is too close to portal during grace period, wait
+                return;
+            }
+            
+            // Only add a new movement task if we don't already have one targeting the leader's current position
+            var hasRecentLeaderTask = _tasks.Any(t => t.Type == TaskNode.TaskNodeType.Movement && 
+                Vector3.Distance(t.WorldPosition, _followTarget.Pos) < Settings.PathfindingNodeDistance.Value);
                 
+            if (!hasRecentLeaderTask)
+            {
                 _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
             }
         }
@@ -1351,20 +1508,41 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
          }
      }
 
-     /// <summary>
-     /// Coroutine version of ExecuteTasks - uses yielding instead of blocking
-     /// </summary>
-     private IEnumerator ExecuteTasksCoroutine()
-     {
-         // We have our tasks, now we need to perform in game logic with them.
-         // Allow immediate execution if we're stuck to improve responsiveness
-         bool canExecuteImmediately = _isStuckDetectionActive && _stuckRecoveryAttempts > 0;
-         
-         if ((DateTime.Now > _nextBotAction || canExecuteImmediately) && _tasks.Count > 0)
-         {
+         /// <summary>
+    /// Coroutine version of ExecuteTasks - uses yielding instead of blocking
+    /// </summary>
+    private IEnumerator ExecuteTasksCoroutine()
+    {
+        // We have our tasks, now we need to perform in game logic with them.
+        // Allow immediate execution if we're stuck to improve responsiveness
+        bool canExecuteImmediately = _isStuckDetectionActive && _stuckRecoveryAttempts > 0;
+        
+        if ((DateTime.Now > _nextBotAction || canExecuteImmediately) && _tasks.Count > 0)
+        {
             var currentTask = _tasks.First();
             var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
             var playerDistanceMoved = Vector3.Distance(GameController.Player.Pos, _lastPlayerPosition);
+            
+            // PRIORITY CHECK: If leader is now closer than current task, abandon current task
+            if (_followTarget != null && currentTask.Type == TaskNode.TaskNodeType.Movement)
+            {
+                var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+                
+                // If leader is significantly closer than the current task, abandon the task
+                if (leaderDistance < taskDistance * 0.7f && leaderDistance < Settings.ClearPathDistance.Value)
+                {
+                    // Clear all movement tasks since leader is now closer
+                    _tasks.RemoveAll(t => t.Type == TaskNode.TaskNodeType.Movement);
+                    
+                    // Add new task to go directly to leader
+                    if (leaderDistance >= Settings.PathfindingNodeDistance.Value)
+                    {
+                        _tasks.Insert(0, new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance));
+                    }
+                    
+                    yield break; // Exit and restart with new task
+                }
+            }
 
             //We are using a same map transition and have moved significnatly since last tick. Mark the transition task as done.
             if (currentTask.Type == TaskNode.TaskNodeType.Transition &&
@@ -1417,10 +1595,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     }
 
                     // Always attempt normal movement (this was the original working logic)
-                    // Check if PickItV2 is active before performing mouse actions
+                    // Check if PickItV2 or ReAgent is active before performing mouse actions
                     if (!ExecuteMouseActionIfPossible(() =>
                     {
                         Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(currentTask.WorldPosition));
+                        
+                        // Add small delay to ensure mouse positioning is complete
+                        System.Threading.Thread.Sleep(10);
                         
                         // Force a click if the setting is enabled to prevent getting stuck on UI elements
                         if (Settings.ForceClickDuringMovement.Value)
@@ -1432,7 +1613,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         Input.KeyUp(Settings.MovementKey);
                     }))
                     {
-                        // PickItV2 is active, yielding control
+                        // PickItV2 or ReAgent is active, yielding control
                         yield break;
                     }
 
@@ -1464,23 +1645,23 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         var targetInfo = questLoot.GetComponent<Targetable>();
                         if (!targetInfo.isTargeted)
                         {
-                            // Check if PickItV2 is active before mouse actions
+                            // Check if PickItV2 or ReAgent is active before mouse actions
                             if (!ExecuteMouseActionIfPossible(() => MouseoverItem(questLoot)))
                             {
-                                // PickItV2 is active, yielding control
+                                // PickItV2 or ReAgent is active, yielding control
                                 yield break;
                             }
                         }
                         if (targetInfo.isTargeted)
                         {
-                            // Check if PickItV2 is active before clicking
+                            // Check if PickItV2 or ReAgent is active before clicking
                             if (!ExecuteMouseActionIfPossible(() =>
                             {
                                 Mouse.LeftMouseDown();
                                 Mouse.LeftMouseUp();
                             }))
                             {
-                                // PickItV2 is active, yielding control
+                                // PickItV2 or ReAgent is active, yielding control
                                 yield break;
                             }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
@@ -1496,10 +1677,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         {
                             //Click the transition
                             Input.KeyUp(Settings.MovementKey);
-                            // Check if PickItV2 is active before clicking transition
+                            // Check if PickItV2 or ReAgent is active before clicking transition
                             if (!ExecuteMouseActionIfPossible(() => Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100)))
                             {
-                                // PickItV2 is active, yielding control
+                                // PickItV2 or ReAgent is active, yielding control
                                 yield break;
                             }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
@@ -1527,10 +1708,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                             }
                             
                             // Normal movement if no dash executed
-                            // Check if PickItV2 is active before mouse movement
+                            // Check if PickItV2 or ReAgent is active before mouse movement
                             if (!ExecuteMouseActionIfPossible(() =>
                             {
                                 Mouse.SetCursorPosHuman2(screenPos);
+                                
+                                // Add small delay to ensure mouse positioning is complete
+                                System.Threading.Thread.Sleep(10);
                                 
                                 // Force a click if the setting is enabled to prevent getting stuck on UI elements
                                 if (Settings.ForceClickDuringMovement.Value)
@@ -1542,7 +1726,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                                 Input.KeyUp(Settings.MovementKey);
                             }))
                             {
-                                // PickItV2 is active, yielding control
+                                // PickItV2 or ReAgent is active, yielding control
                                 yield break;
                             }
                         }
@@ -1558,10 +1742,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                         {
                             var screenPos = WorldToValidScreenPosition(currentTask.WorldPosition);
                             Input.KeyUp(Settings.MovementKey);
-                            // Check if PickItV2 is active before clicking waypoint
+                            // Check if PickItV2 or ReAgent is active before clicking waypoint
                             if (!ExecuteMouseActionIfPossible(() => Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100)))
                             {
-                                // PickItV2 is active, yielding control
+                                // PickItV2 or ReAgent is active, yielding control
                                 yield break;
                             }
                             _nextBotAction = DateTime.Now.AddSeconds(1);
@@ -1824,7 +2008,22 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _stuckRecoveryAttempts++;
         var currentPos = GameController.Player.Pos;
         
-        // Recovery Strategy 1: Try aggressive dash if available
+        // Recovery Strategy 1: Check if we're clicking on items and clear them
+        if (IsLikelyClickingOnItems())
+        {
+            // Force a simple left click to clear any item interaction
+            if (ExecuteMouseActionIfPossible(() =>
+            {
+                Mouse.LeftClick(25);
+            }))
+            {
+                // Reset stuck detection timer to give item clearing time to work
+                _stuckDetectionStartTime = DateTime.Now;
+                return;
+            }
+        }
+        
+        // Recovery Strategy 2: Try aggressive dash if available
         if (Settings.IsDashEnabled.Value && _tasks.Count > 0)
         {
             var targetPos = _tasks.First().WorldPosition;
@@ -1841,14 +2040,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
         }
         
-        // Recovery Strategy 2: Generate random nearby movement
-        var randomOffset = new Vector3(
-            (float)(random.NextDouble() - 0.5) * 200,
-            (float)(random.NextDouble() - 0.5) * 200,
-            currentPos.Z
-        );
-        
-        var recoveryPos = currentPos + randomOffset;
+        // Recovery Strategy 3: Generate random nearby movement with item avoidance
+        var recoveryPos = GenerateItemAvoidancePosition(currentPos);
         
         // Insert recovery movement at the beginning of task queue
         _tasks.Insert(0, new TaskNode(recoveryPos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Movement));
@@ -1858,6 +2051,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         if (ExecuteMouseActionIfPossible(() =>
         {
             Mouse.SetCursorPosHuman2(WorldToValidScreenPosition(recoveryPos));
+            
+            // Add small delay and random offset to ensure reliable movement
+            System.Threading.Thread.Sleep(15);
+            
             Input.KeyDown(Settings.MovementKey);
             Input.KeyUp(Settings.MovementKey);
         }))
@@ -1869,7 +2066,83 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Reset stuck detection timer to give recovery time to work
         _stuckDetectionStartTime = DateTime.Now;
         
-        // Attempting stuck recovery with random movement
+        // Attempting stuck recovery with item-avoiding movement
+    }
+    
+    /// <summary>
+    /// Detects if the player is likely clicking on items instead of moving
+    /// </summary>
+    private bool IsLikelyClickingOnItems()
+    {
+        try
+        {
+            // Check if there are many items on ground near the player
+            var nearbyItems = GameController.EntityListWrapper.Entities
+                .Where(e => e.Type == ExileCore.Shared.Enums.EntityType.WorldItem)
+                .Where(e => e.IsTargetable && e.IsValid)
+                .Count(e => Vector3.Distance(e.Pos, GameController.Player.Pos) < 150);
+            
+            // If there are many items nearby and we're stuck, likely clicking on items
+            return nearbyItems > 5;
+        }
+        catch (Exception ex)
+        {
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// Generates a recovery position that avoids items on the ground
+    /// </summary>
+    private Vector3 GenerateItemAvoidancePosition(Vector3 currentPos)
+    {
+        try
+        {
+            // Get nearby items to avoid
+            var nearbyItems = GameController.EntityListWrapper.Entities
+                .Where(e => e.Type == ExileCore.Shared.Enums.EntityType.WorldItem)
+                .Where(e => e.IsTargetable && e.IsValid)
+                .Where(e => Vector3.Distance(e.Pos, currentPos) < 200)
+                .ToList();
+            
+            // Try multiple random positions and pick the one farthest from items
+            var bestPosition = currentPos;
+            var bestDistance = 0f;
+            
+            for (int i = 0; i < 10; i++)
+            {
+                var randomOffset = new Vector3(
+                    (float)(random.NextDouble() - 0.5) * 300,
+                    (float)(random.NextDouble() - 0.5) * 300,
+                    currentPos.Z
+                );
+                
+                var candidatePos = currentPos + randomOffset;
+                
+                // Calculate minimum distance to any item
+                var minItemDistance = nearbyItems.Count > 0 ? 
+                    nearbyItems.Min(item => Vector3.Distance(item.Pos, candidatePos)) : 
+                    float.MaxValue;
+                
+                if (minItemDistance > bestDistance)
+                {
+                    bestDistance = minItemDistance;
+                    bestPosition = candidatePos;
+                }
+            }
+            
+            return bestPosition;
+        }
+        catch (Exception ex)
+        {
+            // Fallback to simple random position
+            var randomOffset = new Vector3(
+                (float)(random.NextDouble() - 0.5) * 200,
+                (float)(random.NextDouble() - 0.5) * 200,
+                currentPos.Z
+            );
+            return currentPos + randomOffset;
+        }
     }
     
     /// <summary>
@@ -2893,7 +3166,93 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var constrainedX = Math.Max(centerX - maxOffsetX, Math.Min(centerX + maxOffsetX, result.X));
         var constrainedY = Math.Max(centerY - maxOffsetY, Math.Min(centerY + maxOffsetY, result.Y));
         
-        return new Vector2(constrainedX, constrainedY);
+        var finalPos = new Vector2(constrainedX, constrainedY);
+        
+        // Check if the final position would click on an item and adjust if needed
+        finalPos = AvoidClickingOnItems(finalPos, worldPos, windowRect);
+        
+        // Add small random offset to prevent clicking on exact same pixel repeatedly
+        finalPos = AddRandomOffset(finalPos, windowRect);
+        
+        return finalPos;
+    }
+    
+    /// <summary>
+    /// Adds a small random offset to mouse position to prevent pixel-perfect clicking issues
+    /// </summary>
+    private Vector2 AddRandomOffset(Vector2 basePos, RectangleF windowRect)
+    {
+        try
+        {
+            // Add small random offset (±3 pixels) to prevent exact pixel clicking
+            var offsetX = (float)(random.NextDouble() - 0.5) * 6;
+            var offsetY = (float)(random.NextDouble() - 0.5) * 6;
+            
+            var adjustedPos = new Vector2(basePos.X + offsetX, basePos.Y + offsetY);
+            
+            // Ensure the adjusted position is still within bounds
+            adjustedPos.X = Math.Max(windowRect.Left + 10, Math.Min(windowRect.Right - 10, adjustedPos.X));
+            adjustedPos.Y = Math.Max(windowRect.Top + 10, Math.Min(windowRect.Bottom - 10, adjustedPos.Y));
+            
+            return adjustedPos;
+        }
+        catch (Exception ex)
+        {
+            return basePos;
+        }
+    }
+    
+    /// <summary>
+    /// Adjusts mouse position to avoid clicking on items on the ground
+    /// </summary>
+    private Vector2 AvoidClickingOnItems(Vector2 screenPos, Vector3 targetWorldPos, RectangleF windowRect)
+    {
+        try
+        {
+            // Check for items on ground that might interfere with movement
+            var nearbyItems = GameController.EntityListWrapper.Entities
+                .Where(e => e.Type == ExileCore.Shared.Enums.EntityType.WorldItem)
+                .Where(e => e.IsTargetable && e.IsValid)
+                .Where(e => Vector3.Distance(e.Pos, targetWorldPos) < 100) // Only check nearby items
+                .ToList();
+            
+            if (nearbyItems.Count == 0)
+                return screenPos;
+            
+            // Get item labels that might be on screen
+            var itemLabels = GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                .Where(label => label.IsVisible && label.ItemOnGround != null)
+                .ToList();
+            
+            foreach (var label in itemLabels)
+            {
+                var labelRect = label.Label.GetClientRect();
+                var labelCenter = labelRect.Center;
+                var labelScreenPos = new Vector2(labelCenter.X, labelCenter.Y);
+                
+                // Check if our intended click position is too close to an item label
+                var distance = Vector2.Distance(screenPos, labelScreenPos);
+                if (distance < 30) // 30 pixel threshold
+                {
+                    // Adjust position to avoid the item
+                    var avoidanceDirection = (screenPos - labelScreenPos).Normalized();
+                    var adjustedPos = labelScreenPos + avoidanceDirection * 40; // Move 40 pixels away
+                    
+                    // Make sure adjusted position is still within game window
+                    adjustedPos.X = Math.Max(windowRect.Left + 50, Math.Min(windowRect.Right - 50, adjustedPos.X));
+                    adjustedPos.Y = Math.Max(windowRect.Top + 50, Math.Min(windowRect.Bottom - 50, adjustedPos.Y));
+                    
+                    return adjustedPos;
+                }
+            }
+            
+            return screenPos;
+        }
+        catch (Exception ex)
+        {
+            // If there's an error in item avoidance, return the original position
+            return screenPos;
+        }
     }
     
             /// <summary>
@@ -3219,7 +3578,67 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 LogMessage($"Error disposing advanced infrastructure: {ex.Message}", 1);
             }
         }
+
+    /// <summary>
+    /// Initializes access to shared utilities via PluginBridge.
+    /// </summary>
+    private void InitializeSharedUtilities()
+    {
+        try
+        {
+            // Check for InputCoordinator
+            var requestControlMethod = GameController.PluginBridge.GetMethod<Func<string, int, bool>>("InputCoordinator.RequestControl");
+            if (requestControlMethod != null)
+            {
+                LogMessage("InputCoordinator detected via PluginBridge", 5);
+            }
+
+            // Check for PluginLogger
+            var logErrorMethod = GameController.PluginBridge.GetMethod<Action<string, string>>("PluginLogger.LogError");
+            if (logErrorMethod != null)
+            {
+                LogMessage("PluginLogger detected via PluginBridge", 5);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to initialize shared utilities: {ex.Message}", 5);
+        }
     }
+
+    private bool RequestInputControl(string pluginName, int durationMs)
+    {
+        try
+        {
+            var method = GameController.PluginBridge.GetMethod<Func<string, int, bool>>("InputCoordinator.RequestControl");
+            return method?.Invoke(pluginName, durationMs) ?? true; // Fallback to true if not available
+        }
+        catch
+        {
+            return true; // Proceed if bridge fails
+        }
+    }
+
+    private void ReleaseInputControl(string pluginName)
+    {
+        try
+        {
+            var method = GameController.PluginBridge.GetMethod<Action<string>>("InputCoordinator.ReleaseControl");
+            method?.Invoke(pluginName);
+        }
+        catch { }
+    }
+
+    private void LogSharedError(string pluginName, string message)
+    {
+        try
+        {
+            var method = GameController.PluginBridge.GetMethod<Action<string, string>>("PluginLogger.LogError");
+            method?.Invoke(pluginName, message);
+        }
+        catch { }
+    }
+}
     
     // Message classes for network communication
     public class CommandMessage
