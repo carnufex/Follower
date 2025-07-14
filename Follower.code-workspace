@@ -8,6 +8,15 @@
 		},
 		{
 			"path": "../PickItV2"
+		},
+		{
+			"path": "../Shared"
+		},
+		{
+			"path": "../ReAgent"
+		},
+		{
+			"path": "../LeaderCommands"
 		}
 	],
 	"settings": {}

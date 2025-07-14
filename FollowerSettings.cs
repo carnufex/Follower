@@ -44,6 +44,9 @@ public class FollowerSettings : ISettings
     [Menu("Leader Management/Prioritize Closest Leader")] public ToggleNode PrioritizeClosestLeader { get; set; } = new ToggleNode(true);
     [Menu("Leader Management/Teleport Detection Distance")] public RangeNode<int> TeleportDetectionDistance { get; set; } = new RangeNode<int>(4000, 2000, 10000);
     [Menu("Leader Management/Search Last Position")] public ToggleNode SearchLastPosition { get; set; } = new ToggleNode(true);
+    [Menu("Leader Management/Enable Shared Position Fallback")] public ToggleNode EnableSharedPositionFallback { get; set; } = new ToggleNode(true);
+    [Menu("Leader Management/Shared Position Max Age (seconds)")] public RangeNode<int> SharedPositionMaxAge { get; set; } = new RangeNode<int>(5, 1, 30);
+    [Menu("Leader Management/Shared Position Check Interval (ms)")] public RangeNode<int> SharedPositionCheckInterval { get; set; } = new RangeNode<int>(500, 100, 2000);
     
     // Safety & Detection
     [Menu("Safety & Detection/Enable Safety Features")] public ToggleNode EnableSafetyFeatures { get; set; } = new ToggleNode(true);

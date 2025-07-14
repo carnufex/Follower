@@ -138,6 +138,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private NetworkLogger _networkLogger;
     private EnhancedMessageProtocol _messageProtocol;
     private CommandExecutor _commandExecutor;
+    
+    // Shared position system
+    private SharedPositionManager _sharedPositionManager;
+    private DateTime _lastSharedPositionCheck = DateTime.MinValue;
+    private Vector3 _sharedPositionFallback = Vector3.Zero;
 
     public override bool Initialise()
     {
@@ -152,6 +157,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
         // Initialize PluginBridge for shared utilities
         InitializeSharedUtilities();
+        
+        // Initialize shared position manager
+        InitializeSharedPositionManager();
 
         // Start network services if enabled
         if (Settings.EnableNetworkCommunication.Value)
@@ -1110,10 +1118,27 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             HandleMissingLeader();
         }
-        // Check for gems even when leader is not present (when stopped)
+        // Leader entity not found, try shared position fallback
         else if (_tasks.Count == 0)
         {
-            CheckAndLevelGems(float.MaxValue);
+            var sharedPosition = GetSharedPositionFallback();
+            if (sharedPosition != Vector3.Zero)
+            {
+                // Use shared position as fallback leader position
+                var distanceToSharedPos = Vector3.Distance(GameController.Player.Pos, sharedPosition);
+                
+                // Only use if it's a reasonable distance (not too far)
+                if (distanceToSharedPos < Settings.ClearPathDistance.Value * 2)
+                {
+                    _tasks.Add(new TaskNode(sharedPosition, Settings.PathfindingNodeDistance));
+                    LogMessage($"Using shared position fallback: distance {distanceToSharedPos:F0}", 4);
+                }
+            }
+            else
+            {
+                // Check for gems even when leader is not present (when stopped)
+                CheckAndLevelGems(float.MaxValue);
+            }
         }
     }
 
@@ -2228,6 +2253,64 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
+    /// Gets shared position fallback when entity detection fails
+    /// </summary>
+    private Vector3 GetSharedPositionFallback()
+    {
+        if (!Settings.EnableSharedPositionFallback.Value || _sharedPositionManager == null)
+            return Vector3.Zero;
+        
+        var now = DateTime.Now;
+        
+        // Check at configured interval
+        if (now - _lastSharedPositionCheck < TimeSpan.FromMilliseconds(Settings.SharedPositionCheckInterval.Value))
+            return _sharedPositionFallback;
+        
+        _lastSharedPositionCheck = now;
+        
+        try
+        {
+            var positionData = _sharedPositionManager.ReadPosition();
+            if (positionData != null)
+            {
+                // Check if position is fresh
+                var maxAge = TimeSpan.FromSeconds(Settings.SharedPositionMaxAge.Value);
+                if (positionData.IsFresh(maxAge))
+                {
+                    // Check if it's from the same area
+                    var currentAreaName = GameController.Area.CurrentArea?.Name;
+                    if (!string.IsNullOrEmpty(currentAreaName) && positionData.IsSameArea(currentAreaName))
+                    {
+                        _sharedPositionFallback = positionData.Position;
+                        return _sharedPositionFallback;
+                    }
+                    else
+                    {
+                        // Different area, don't use this position
+                        _sharedPositionFallback = Vector3.Zero;
+                    }
+                }
+                else
+                {
+                    // Stale data, reset fallback
+                    _sharedPositionFallback = Vector3.Zero;
+                }
+            }
+            else
+            {
+                _sharedPositionFallback = Vector3.Zero;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error reading shared position: {ex.Message}", 2);
+            _sharedPositionFallback = Vector3.Zero;
+        }
+        
+        return _sharedPositionFallback;
+    }
+
+    /// <summary>
     /// Parses leader names and finds the best available leader
     /// </summary>
     private Entity GetBestAvailableLeader()
@@ -2961,6 +3044,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             Graphics.DrawText($"{statusText}: {remainingTime / 1000:F1}s", new Vector2(500, 280), statusColor);
         }
         
+        // Show shared position fallback status
+        if (Settings.EnableSharedPositionFallback.Value && _sharedPositionFallback != Vector3.Zero)
+        {
+            var sharedPosDistance = Vector3.Distance(GameController.Player.Pos, _sharedPositionFallback);
+            var positionAge = _sharedPositionManager?.GetPositionAge() ?? TimeSpan.Zero;
+            Graphics.DrawText($"SHARED POSITION: {sharedPosDistance:F0} units | Age: {positionAge.TotalSeconds:F1}s", 
+                new Vector2(500, 300), SharpDX.Color.Cyan);
+                
+            // Draw shared position on screen
+            var sharedPosScreen = WorldToValidScreenPosition(_sharedPositionFallback);
+            Graphics.DrawText("SHARED POS", sharedPosScreen, SharpDX.Color.Cyan);
+        }
+        
         // Show gem leveling status
         if (_isLevelingGems)
         {
@@ -3493,6 +3589,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
                 // Dispose advanced infrastructure components
                 DisposeAdvancedInfrastructure();
+                
+                // Cleanup shared position manager
+                _sharedPositionManager?.Cleanup();
             }
             catch (Exception ex)
             {
@@ -3549,6 +3648,38 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         catch (Exception ex)
         {
             LogMessage($"Failed to initialize shared utilities: {ex.Message}", 5);
+        }
+    }
+    
+    /// <summary>
+    /// Initializes the shared position manager for file-based leader position fallback
+    /// </summary>
+    private void InitializeSharedPositionManager()
+    {
+        try
+        {
+            if (Settings.EnableSharedPositionFallback.Value)
+            {
+                // Use leader name as the character name for the shared position file
+                var leaderName = Settings.LeaderName.Value?.Trim();
+                if (!string.IsNullOrEmpty(leaderName))
+                {
+                    _sharedPositionManager = new SharedPositionManager(leaderName);
+                    LogMessage($"Shared position manager initialized for leader: {leaderName}", 4);
+                }
+                else
+                {
+                    LogMessage("Shared position manager not initialized - no leader name configured", 3);
+                }
+            }
+            else
+            {
+                LogMessage("Shared position fallback is disabled", 4);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to initialize shared position manager: {ex.Message}", 1);
         }
     }
 
