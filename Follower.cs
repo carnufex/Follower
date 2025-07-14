@@ -3180,7 +3180,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// <summary>
     /// Adds a small random offset to mouse position to prevent pixel-perfect clicking issues
     /// </summary>
-    private Vector2 AddRandomOffset(Vector2 basePos, RectangleF windowRect)
+    private Vector2 AddRandomOffset(Vector2 basePos, SharpDX.RectangleF windowRect)
     {
         try
         {
@@ -3205,7 +3205,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// <summary>
     /// Adjusts mouse position to avoid clicking on items on the ground
     /// </summary>
-    private Vector2 AvoidClickingOnItems(Vector2 screenPos, Vector3 targetWorldPos, RectangleF windowRect)
+    private Vector2 AvoidClickingOnItems(Vector2 screenPos, Vector3 targetWorldPos, SharpDX.RectangleF windowRect)
     {
         try
         {
