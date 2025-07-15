@@ -16,7 +16,7 @@ namespace Follower
         private readonly FollowerSettings _settings;
         private readonly Random _random = new Random();
         private DateTime _lastUICheck = DateTime.MinValue;
-        private List<RectangleF> _cachedUIElements = new List<RectangleF>();
+        private List<SharpDX.RectangleF> _cachedUIElements = new List<SharpDX.RectangleF>();
         private Vector2 _safeZoneCenter;
         private float _safeZoneRadius;
         
@@ -164,11 +164,8 @@ namespace Follower
                     _cachedUIElements.Add(ingameUI.ChatPanel.GetClientRect());
                 }
                 
-                // Add flask panel
-                if (ingameUI.FlaskPanel?.IsVisible == true)
-                {
-                    _cachedUIElements.Add(ingameUI.FlaskPanel.GetClientRect());
-                }
+                // Flask panel not available in this API version
+                // Removed: FlaskPanel check
                 
                 // Add minimap
                 if (ingameUI.Map?.SmallMiniMap?.IsVisible == true)
@@ -201,7 +198,7 @@ namespace Follower
                     {
                         var labelRect = label.Label.GetClientRect();
                         // Add padding around item labels
-                        var paddedRect = new RectangleF(
+                        var paddedRect = new SharpDX.RectangleF(
                             labelRect.X - 10, 
                             labelRect.Y - 10, 
                             labelRect.Width + 20, 
@@ -231,7 +228,7 @@ namespace Follower
             // Add top edge exclusion (for window title bar)
             if (_settings.ExcludeTopEdge.Value)
             {
-                _cachedUIElements.Add(new RectangleF(
+                _cachedUIElements.Add(new SharpDX.RectangleF(
                     windowRect.X, 
                     windowRect.Y, 
                     windowRect.Width, 
@@ -242,7 +239,7 @@ namespace Follower
             // Add bottom edge exclusion (for taskbar-like elements)
             if (_settings.ExcludeBottomEdge.Value)
             {
-                _cachedUIElements.Add(new RectangleF(
+                _cachedUIElements.Add(new SharpDX.RectangleF(
                     windowRect.X, 
                     windowRect.Y + windowRect.Height - _settings.BottomEdgeExclusionHeight.Value, 
                     windowRect.Width, 
@@ -253,7 +250,7 @@ namespace Follower
             // Add left edge exclusion
             if (_settings.ExcludeLeftEdge.Value)
             {
-                _cachedUIElements.Add(new RectangleF(
+                _cachedUIElements.Add(new SharpDX.RectangleF(
                     windowRect.X, 
                     windowRect.Y, 
                     _settings.LeftEdgeExclusionWidth.Value, 
@@ -264,7 +261,7 @@ namespace Follower
             // Add right edge exclusion
             if (_settings.ExcludeRightEdge.Value)
             {
-                _cachedUIElements.Add(new RectangleF(
+                _cachedUIElements.Add(new SharpDX.RectangleF(
                     windowRect.X + windowRect.Width - _settings.RightEdgeExclusionWidth.Value, 
                     windowRect.Y, 
                     _settings.RightEdgeExclusionWidth.Value, 
@@ -276,7 +273,7 @@ namespace Follower
         /// <summary>
         /// Checks if a position intersects with any UI element
         /// </summary>
-        private RectangleF? GetIntersectingUIElement(Vector2 position)
+        private SharpDX.RectangleF? GetIntersectingUIElement(Vector2 position)
         {
             var point = new Vector2(position.X, position.Y);
             
@@ -292,7 +289,7 @@ namespace Follower
         /// <summary>
         /// Finds a safe position away from UI elements
         /// </summary>
-        private Vector2 FindSafePositionAwayFromUI(Vector2 originalPosition, RectangleF intersectingUI)
+        private Vector2 FindSafePositionAwayFromUI(Vector2 originalPosition, SharpDX.RectangleF intersectingUI)
         {
             var attempts = 0;
             var maxAttempts = 20;
@@ -329,7 +326,7 @@ namespace Follower
         /// <summary>
         /// Gets a position away from a specific UI rectangle
         /// </summary>
-        private Vector2 GetPositionAwayFromRect(Vector2 originalPosition, RectangleF rect)
+        private Vector2 GetPositionAwayFromRect(Vector2 originalPosition, SharpDX.RectangleF rect)
         {
             var rectCenter = new Vector2(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
             var direction = originalPosition - rectCenter;
@@ -398,10 +395,10 @@ namespace Follower
         /// <summary>
         /// Gets debug information about UI elements
         /// </summary>
-        public List<RectangleF> GetUIElementsForDebug()
+        public List<SharpDX.RectangleF> GetUIElementsForDebug()
         {
             RefreshUIElements();
-            return new List<RectangleF>(_cachedUIElements);
+            return new List<SharpDX.RectangleF>(_cachedUIElements);
         }
         
         /// <summary>

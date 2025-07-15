@@ -3184,7 +3184,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 var safeZoneRadius = (smallestDimension / 2) * (Settings.MouseMovementAreaPercent.Value / 100.0f);
                 
                 // Draw safe zone outline (approximate with box)
-                var safeZoneRect = new RectangleF(
+                var safeZoneRect = new SharpDX.RectangleF(
                     safeZoneCenter.X - safeZoneRadius,
                     safeZoneCenter.Y - safeZoneRadius,
                     safeZoneRadius * 2,

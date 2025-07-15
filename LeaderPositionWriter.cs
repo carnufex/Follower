@@ -64,7 +64,7 @@ namespace Follower
                 if (currentArea != null && currentPosition != Vector3.Zero)
                 {
                     var areaName = currentArea.Name;
-                    var instanceId = currentArea.Id.ToString(); // Use area ID as instance ID
+                    var instanceId = currentArea.GetHashCode().ToString(); // Use area hash as instance ID
                     
                     var success = _sharedPositionManager.WritePosition(currentPosition, areaName, instanceId);
                     
