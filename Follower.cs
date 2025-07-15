@@ -143,6 +143,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private SharedPositionManager _sharedPositionManager;
     private DateTime _lastSharedPositionCheck = DateTime.MinValue;
     private Vector3 _sharedPositionFallback = Vector3.Zero;
+    
+    // Smart UI Avoidance system
+    private SmartUIAvoidance _smartUIAvoidance;
 
     public override bool Initialise()
     {
@@ -160,6 +163,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         // Initialize shared position manager
         InitializeSharedPositionManager();
+        
+        // Initialize Smart UI Avoidance system
+        InitializeSmartUIAvoidance();
 
         // Start network services if enabled
         if (Settings.EnableNetworkCommunication.Value)
@@ -1999,8 +2005,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
         }
         
-        // Recovery Strategy 3: Generate random nearby movement with item avoidance
-        var recoveryPos = GenerateItemAvoidancePosition(currentPos);
+        // Recovery Strategy 3: Generate smart recovery position using UI avoidance
+        var recoveryPos = GenerateSmartRecoveryPosition(currentPos);
         
         // Insert recovery movement at the beginning of task queue
         _tasks.Insert(0, new TaskNode(recoveryPos, Settings.PathfindingNodeDistance.Value, TaskNode.TaskNodeType.Movement));
@@ -2101,6 +2107,106 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 currentPos.Z
             );
             return currentPos + randomOffset;
+        }
+    }
+    
+    /// <summary>
+    /// Generates a smart recovery position using both item avoidance and UI avoidance
+    /// </summary>
+    private Vector3 GenerateSmartRecoveryPosition(Vector3 currentPos)
+    {
+        try
+        {
+            // First try Smart UI Avoidance if enabled
+            if (Settings.EnableSmartUIAvoidance.Value && _smartUIAvoidance != null)
+            {
+                // Generate multiple candidate positions and pick the best one
+                var bestPosition = currentPos;
+                var bestScore = float.MinValue;
+                
+                for (int i = 0; i < 15; i++)
+                {
+                    var randomOffset = new Vector3(
+                        (float)(random.NextDouble() - 0.5) * 400,
+                        (float)(random.NextDouble() - 0.5) * 400,
+                        currentPos.Z
+                    );
+                    
+                    var candidatePos = currentPos + randomOffset;
+                    var candidateScreenPos = WorldToValidScreenPosition(candidatePos);
+                    
+                    // Check if the screen position is safe (not on UI elements)
+                    if (_smartUIAvoidance.IsPositionSafe(candidateScreenPos))
+                    {
+                        // Calculate score based on distance from items and other factors
+                        var score = ScoreRecoveryPosition(candidatePos, currentPos);
+                        
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestPosition = candidatePos;
+                        }
+                    }
+                }
+                
+                // If we found a good position, use it
+                if (bestScore > float.MinValue)
+                {
+                    return bestPosition;
+                }
+            }
+            
+            // Fallback to basic item avoidance
+            return GenerateItemAvoidancePosition(currentPos);
+        }
+        catch (Exception ex)
+        {
+            // Ultimate fallback
+            return GenerateItemAvoidancePosition(currentPos);
+        }
+    }
+    
+    /// <summary>
+    /// Scores a recovery position based on various factors
+    /// </summary>
+    private float ScoreRecoveryPosition(Vector3 candidatePos, Vector3 currentPos)
+    {
+        float score = 0f;
+        
+        try
+        {
+            // Factor 1: Distance from items (higher score for farther from items)
+            var nearbyItems = GameController.EntityListWrapper.Entities
+                .Where(e => e.Type == ExileCore.Shared.Enums.EntityType.WorldItem)
+                .Where(e => e.IsTargetable && e.IsValid)
+                .Where(e => Vector3.Distance(e.Pos, candidatePos) < 200)
+                .ToList();
+            
+            if (nearbyItems.Count > 0)
+            {
+                var minItemDistance = nearbyItems.Min(item => Vector3.Distance(item.Pos, candidatePos));
+                score += minItemDistance * 0.1f; // Convert to score
+            }
+            else
+            {
+                score += 100f; // Bonus for no nearby items
+            }
+            
+            // Factor 2: Reasonable distance from current position (not too far, not too close)
+            var distanceFromCurrent = Vector3.Distance(candidatePos, currentPos);
+            if (distanceFromCurrent > 50 && distanceFromCurrent < 300)
+            {
+                score += 50f;
+            }
+            
+            // Factor 3: Avoid positions that are too close to walls/obstacles
+            // This could be expanded with terrain checking
+            
+            return score;
+        }
+        catch (Exception ex)
+        {
+            return 0f;
         }
     }
     
@@ -3057,6 +3163,43 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             Graphics.DrawText("SHARED POS", sharedPosScreen, SharpDX.Color.Cyan);
         }
         
+        // Show Smart UI Avoidance status and debug rectangles
+        if (Settings.EnableSmartUIAvoidance.Value && _smartUIAvoidance != null)
+        {
+            Graphics.DrawText("SMART UI AVOIDANCE: ACTIVE", new Vector2(500, 320), SharpDX.Color.LightGreen);
+            
+            // Draw UI debug rectangles if enabled
+            if (Settings.ShowUIDebugRectangles.Value)
+            {
+                var uiElements = _smartUIAvoidance.GetUIElementsForDebug();
+                foreach (var uiRect in uiElements)
+                {
+                    Graphics.DrawBox(uiRect, SharpDX.Color.Red, 2);
+                }
+                
+                // Draw safe zone circle
+                var windowRect = GameController.Window.GetWindowRectangle();
+                var safeZoneCenter = new Vector2(windowRect.X + windowRect.Width / 2, windowRect.Y + windowRect.Height / 2);
+                var smallestDimension = Math.Min(windowRect.Width, windowRect.Height);
+                var safeZoneRadius = (smallestDimension / 2) * (Settings.MouseMovementAreaPercent.Value / 100.0f);
+                
+                // Draw safe zone outline (approximate with box)
+                var safeZoneRect = new RectangleF(
+                    safeZoneCenter.X - safeZoneRadius,
+                    safeZoneCenter.Y - safeZoneRadius,
+                    safeZoneRadius * 2,
+                    safeZoneRadius * 2
+                );
+                Graphics.DrawBox(safeZoneRect, SharpDX.Color.Green, 2);
+                
+                Graphics.DrawText($"UI ELEMENTS: {uiElements.Count}", new Vector2(500, 340), SharpDX.Color.Yellow);
+            }
+        }
+        else
+        {
+            Graphics.DrawText("SMART UI AVOIDANCE: DISABLED", new Vector2(500, 320), SharpDX.Color.Orange);
+        }
+        
         // Show gem leveling status
         if (_isLevelingGems)
         {
@@ -3179,6 +3322,23 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
 
     private Vector2 WorldToValidScreenPosition(Vector3 worldPos)
+    {
+        // Use Smart UI Avoidance if enabled, otherwise fallback to basic method
+        if (Settings.EnableSmartUIAvoidance.Value && _smartUIAvoidance != null)
+        {
+            return _smartUIAvoidance.GetSafeScreenPosition(worldPos);
+        }
+        else
+        {
+            // Fallback to basic method
+            return GetBasicScreenPosition(worldPos);
+        }
+    }
+    
+    /// <summary>
+    /// Basic screen position calculation (fallback when Smart UI Avoidance is disabled)
+    /// </summary>
+    private Vector2 GetBasicScreenPosition(Vector3 worldPos)
     {
         var windowRect = GameController.Window.GetWindowRectangle();
         var screenPos = Camera.WorldToScreen(worldPos);
@@ -3680,6 +3840,29 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         catch (Exception ex)
         {
             LogMessage($"Failed to initialize shared position manager: {ex.Message}", 1);
+        }
+    }
+    
+    /// <summary>
+    /// Initializes the Smart UI Avoidance system
+    /// </summary>
+    private void InitializeSmartUIAvoidance()
+    {
+        try
+        {
+            if (Settings.EnableSmartUIAvoidance.Value)
+            {
+                _smartUIAvoidance = new SmartUIAvoidance(GameController, Settings);
+                LogMessage("Smart UI Avoidance system initialized", 4);
+            }
+            else
+            {
+                LogMessage("Smart UI Avoidance is disabled", 4);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to initialize Smart UI Avoidance: {ex.Message}", 1);
         }
     }
 

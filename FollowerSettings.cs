@@ -34,8 +34,22 @@ public class FollowerSettings : ISettings
     [Menu("Dash & Movement/Aggressive Dash")] public ToggleNode AggressiveDash { get; set; } = new ToggleNode(true);
     [Menu("Dash & Movement/Dash Distance Threshold")] public RangeNode<int> DashDistanceThreshold { get; set; } = new RangeNode<int>(800, 200, 2000);
     [Menu("Dash & Movement/Dash Cooldown (ms)")] public RangeNode<int> DashCooldown { get; set; } = new RangeNode<int>(500, 100, 2000);
-    [Menu("Dash & Movement/Mouse Movement Area (% from center)")] public RangeNode<int> MouseMovementAreaPercent { get; set; } = new RangeNode<int>(75, 50, 100);
+    [Menu("Dash & Movement/Mouse Movement Area (% from center)")] public RangeNode<int> MouseMovementAreaPercent { get; set; } = new RangeNode<int>(65, 30, 90);
     [Menu("Dash & Movement/Force Click During Movement")] public ToggleNode ForceClickDuringMovement { get; set; } = new ToggleNode(true);
+    
+    // Smart UI Avoidance
+    [Menu("Smart UI Avoidance/Enable Smart UI Avoidance")] public ToggleNode EnableSmartUIAvoidance { get; set; } = new ToggleNode(true);
+    [Menu("Smart UI Avoidance/UI Avoidance Distance")] public RangeNode<int> UIAvoidanceDistance { get; set; } = new RangeNode<int>(50, 20, 150);
+    [Menu("Smart UI Avoidance/Mouse Random Offset")] public RangeNode<int> MouseRandomOffset { get; set; } = new RangeNode<int>(8, 2, 20);
+    [Menu("Smart UI Avoidance/Show UI Debug Rectangles")] public ToggleNode ShowUIDebugRectangles { get; set; } = new ToggleNode(false);
+    [Menu("Smart UI Avoidance/Exclude Top Edge")] public ToggleNode ExcludeTopEdge { get; set; } = new ToggleNode(true);
+    [Menu("Smart UI Avoidance/Top Edge Exclusion Height")] public RangeNode<int> TopEdgeExclusionHeight { get; set; } = new RangeNode<int>(50, 20, 150);
+    [Menu("Smart UI Avoidance/Exclude Bottom Edge")] public ToggleNode ExcludeBottomEdge { get; set; } = new ToggleNode(true);
+    [Menu("Smart UI Avoidance/Bottom Edge Exclusion Height")] public RangeNode<int> BottomEdgeExclusionHeight { get; set; } = new RangeNode<int>(80, 20, 200);
+    [Menu("Smart UI Avoidance/Exclude Left Edge")] public ToggleNode ExcludeLeftEdge { get; set; } = new ToggleNode(false);
+    [Menu("Smart UI Avoidance/Left Edge Exclusion Width")] public RangeNode<int> LeftEdgeExclusionWidth { get; set; } = new RangeNode<int>(50, 20, 150);
+    [Menu("Smart UI Avoidance/Exclude Right Edge")] public ToggleNode ExcludeRightEdge { get; set; } = new ToggleNode(false);
+    [Menu("Smart UI Avoidance/Right Edge Exclusion Width")] public RangeNode<int> RightEdgeExclusionWidth { get; set; } = new RangeNode<int>(50, 20, 150);
     
     // Leader Management
     [Menu("Leader Management/Enable Multiple Leaders")] public ToggleNode EnableMultipleLeaders { get; set; } = new ToggleNode(false);
