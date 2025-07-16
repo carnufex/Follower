@@ -638,10 +638,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
         var areaDimensions = GameController.IngameState.Data.AreaDimensions;
         
-        if (processedTerrainData != null && areaDimensions.HasValue)
+        if (processedTerrainData != null && areaDimensions.X > 0 && areaDimensions.Y > 0)
         {
-            _numCols = areaDimensions.Value.X;
-            _numRows = areaDimensions.Value.Y;
+            _numCols = areaDimensions.X;
+            _numRows = areaDimensions.Y;
             _tiles = new byte[_numCols, _numRows];
             
             // Process terrain data using Radar plugin's approach
@@ -2825,10 +2825,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
             var areaDimensions = GameController.IngameState.Data.AreaDimensions;
             
-            if (processedTerrainData != null && areaDimensions.HasValue)
+            if (processedTerrainData != null && areaDimensions.X > 0 && areaDimensions.Y > 0)
             {
-                _numCols = areaDimensions.Value.X;
-                _numRows = areaDimensions.Value.Y;
+                _numCols = areaDimensions.X;
+                _numRows = areaDimensions.Y;
                 _tiles = new byte[_numCols, _numRows];
                 
                 // Process terrain data using Radar plugin's approach
@@ -3465,11 +3465,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
             var areaDimensions = GameController.IngameState.Data.AreaDimensions;
             
-            if (processedTerrainData != null && areaDimensions.HasValue)
+            if (processedTerrainData != null && areaDimensions.X > 0 && areaDimensions.Y > 0)
             {
                 Graphics.DrawText("ENHANCED TERRAIN: ACTIVE (Using Radar-style processing)", 
                     new Vector2(500, 420), SharpDX.Color.LightGreen);
-                Graphics.DrawText($"Terrain Size: {areaDimensions.Value.X}x{areaDimensions.Value.Y}", 
+                Graphics.DrawText($"Terrain Size: {areaDimensions.X}x{areaDimensions.Y}", 
                     new Vector2(500, 440), SharpDX.Color.White);
             }
             else
