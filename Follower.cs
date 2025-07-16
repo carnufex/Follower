@@ -1246,7 +1246,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     for (int i = 0; i < maxPathNodes; i++)
                     {
                         var pathNode = path[i];
-                        var worldPos = new Vector3(pathNode.X, pathNode.Y, playerPos.Z).GridToWorld();
+                        var gridPos = new Vector2(pathNode.X, pathNode.Y);
+                        var worldPos2D = gridPos.GridToWorld();
+                        var worldPos = new Vector3(worldPos2D.X, worldPos2D.Y, playerPos.Z);
                         _tasks.Add(new TaskNode(worldPos, Settings.PathfindingNodeDistance));
                     }
                 }
@@ -3351,7 +3353,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 
                 foreach (var pathNode in _currentPath)
                 {
-                    var worldPos = new Vector3(pathNode.X, pathNode.Y, playerPos.Z).GridToWorld();
+                    var gridPos = new Vector2(pathNode.X, pathNode.Y);
+                    var worldPos2D = gridPos.GridToWorld();
+                    var worldPos = new Vector3(worldPos2D.X, worldPos2D.Y, playerPos.Z);
                     var screenPos = Camera.WorldToScreen(worldPos);
                     
                     // Draw path node
