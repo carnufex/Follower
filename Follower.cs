@@ -146,6 +146,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     
     // Smart UI Avoidance system
     private SmartUIAvoidance _smartUIAvoidance;
+    
+    // Advanced Pathfinding system
+    private AdvancedPathFinder _advancedPathFinder;
+    private List<Vector2> _currentPath = new List<Vector2>();
+    private DateTime _lastPathUpdate = DateTime.MinValue;
 
     public override bool Initialise()
     {
@@ -166,6 +171,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         // Initialize Smart UI Avoidance system
         InitializeSmartUIAvoidance();
+        
+        // Initialize Advanced Pathfinding system
+        InitializeAdvancedPathfinding();
 
         // Start network services if enabled
         if (Settings.EnableNetworkCommunication.Value)
@@ -1166,6 +1174,102 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             return;
         }
         
+        // Use advanced pathfinding if enabled
+        if (Settings.EnableAdvancedPathfinding.Value && _advancedPathFinder != null)
+        {
+            UpdateAdvancedPath();
+        }
+        else
+        {
+            // Fallback to basic task-based pathfinding
+            HandleDistantLeaderBasic();
+        }
+    }
+    
+    /// <summary>
+    /// Updates the advanced pathfinding path to the leader
+    /// </summary>
+    private void UpdateAdvancedPath()
+    {
+        var now = DateTime.Now;
+        var playerPos = GameController.Player.Pos;
+        var leaderPos = _followTarget.Pos;
+        
+        // Check if we need to recalculate the path
+        bool shouldRecalculatePath = false;
+        
+        // Time-based recalculation
+        if (now - _lastPathUpdate > TimeSpan.FromMilliseconds(Settings.PathUpdateFrequency.Value))
+        {
+            shouldRecalculatePath = true;
+        }
+        
+        // Distance-based recalculation
+        if (_currentPath.Count > 0)
+        {
+            var distanceToPath = Vector3.Distance(playerPos, new Vector3(_currentPath[0].X, _currentPath[0].Y, playerPos.Z));
+            if (distanceToPath > Settings.RecalculatePathDistance.Value)
+            {
+                shouldRecalculatePath = true;
+            }
+        }
+        
+        // Empty path recalculation
+        if (_currentPath.Count == 0)
+        {
+            shouldRecalculatePath = true;
+        }
+        
+        // Recalculate path if needed
+        if (shouldRecalculatePath)
+        {
+            try
+            {
+                var playerGridPos = playerPos.WorldToGrid();
+                var leaderGridPos = leaderPos.WorldToGrid();
+                
+                var path = _advancedPathFinder.FindPath(
+                    new Vector2(playerGridPos.X, playerGridPos.Y),
+                    new Vector2(leaderGridPos.X, leaderGridPos.Y)
+                );
+                
+                if (path != null && path.Count > 0)
+                {
+                    _currentPath = path;
+                    _lastPathUpdate = now;
+                    
+                    // Clear existing tasks and add path nodes
+                    _tasks.Clear();
+                    
+                    // Add path nodes as tasks, but limit to prevent overwhelming the system
+                    var maxPathNodes = Math.Min(path.Count, 10);
+                    for (int i = 0; i < maxPathNodes; i++)
+                    {
+                        var pathNode = path[i];
+                        var worldPos = new Vector3(pathNode.X, pathNode.Y, playerPos.Z).GridToWorld();
+                        _tasks.Add(new TaskNode(worldPos, Settings.PathfindingNodeDistance));
+                    }
+                }
+                else
+                {
+                    // No path found, fallback to basic approach
+                    HandleDistantLeaderBasic();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Advanced pathfinding error: {ex.Message}", 2);
+                // Fallback to basic approach on error
+                HandleDistantLeaderBasic();
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Basic fallback pathfinding for distant leader
+    /// </summary>
+    private void HandleDistantLeaderBasic()
+    {
         // Leader moved VERY far in one frame. Check for transition to use to follow them.
         var distanceMoved = Vector3.Distance(_lastTargetPosition, _followTarget.Pos);
         if (_lastTargetPosition != Vector3.Zero && distanceMoved > Settings.ClearPathDistance.Value)
@@ -2723,6 +2827,22 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             }
             
             _lastTerrainRefresh = DateTime.Now;
+            
+            // Reinitialize advanced pathfinding with updated terrain data
+            if (Settings.EnableAdvancedPathfinding.Value)
+            {
+                try
+                {
+                    _advancedPathFinder = new AdvancedPathFinder(_tiles, GameController, Settings);
+                    _currentPath.Clear();
+                    _lastPathUpdate = DateTime.MinValue;
+                    LogMessage("Advanced pathfinding reinitialized after terrain refresh", 5);
+                }
+                catch (Exception pathEx)
+                {
+                    LogMessage($"Failed to reinitialize advanced pathfinding: {pathEx.Message}", 2);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -3214,6 +3334,53 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         else
         {
             Graphics.DrawText("SMART UI AVOIDANCE: DISABLED", new Vector2(500, 320), SharpDX.Color.Orange);
+        }
+        
+        // Show Advanced Pathfinding status and debug paths
+        if (Settings.EnableAdvancedPathfinding.Value && _advancedPathFinder != null)
+        {
+            var cacheInfo = _advancedPathFinder.GetCacheInfo();
+            Graphics.DrawText($"ADVANCED PATHFINDING: ACTIVE | Cache: {cacheInfo.DistanceFields}D/{cacheInfo.DirectionFields}Dir", 
+                new Vector2(500, 380), SharpDX.Color.Cyan);
+            
+            // Draw current path if debug is enabled
+            if (Settings.ShowDebugPaths.Value && _currentPath != null && _currentPath.Count > 0)
+            {
+                var playerPos = GameController.Player.Pos;
+                Vector2 lastPoint = default;
+                
+                foreach (var pathNode in _currentPath)
+                {
+                    var worldPos = new Vector3(pathNode.X, pathNode.Y, playerPos.Z).GridToWorld();
+                    var screenPos = Camera.WorldToScreen(worldPos);
+                    
+                    // Draw path node
+                    Graphics.DrawText("●", screenPos, SharpDX.Color.Yellow);
+                    
+                    // Draw line between path nodes
+                    if (lastPoint != default)
+                    {
+                        // Simple line approximation using multiple points
+                        var direction = screenPos - lastPoint;
+                        var steps = (int)Math.Max(1, Vector2.Distance(screenPos, lastPoint) / 10);
+                        
+                        for (int i = 0; i <= steps; i++)
+                        {
+                            var t = i / (float)steps;
+                            var linePoint = lastPoint + direction * t;
+                            Graphics.DrawText(".", linePoint, SharpDX.Color.Yellow);
+                        }
+                    }
+                    
+                    lastPoint = screenPos;
+                }
+                
+                Graphics.DrawText($"PATH NODES: {_currentPath.Count}", new Vector2(500, 400), SharpDX.Color.Yellow);
+            }
+        }
+        else
+        {
+            Graphics.DrawText("ADVANCED PATHFINDING: DISABLED", new Vector2(500, 380), SharpDX.Color.Orange);
         }
         
         // Show gem leveling status
@@ -3889,6 +4056,29 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         catch (Exception ex)
         {
             LogMessage($"Failed to initialize Smart UI Avoidance: {ex.Message}", 1);
+        }
+    }
+    
+    /// <summary>
+    /// Initializes the Advanced Pathfinding system
+    /// </summary>
+    private void InitializeAdvancedPathfinding()
+    {
+        try
+        {
+            if (Settings.EnableAdvancedPathfinding.Value && _tiles != null)
+            {
+                _advancedPathFinder = new AdvancedPathFinder(_tiles, GameController, Settings);
+                LogMessage("Advanced Pathfinding system initialized", 4);
+            }
+            else
+            {
+                LogMessage("Advanced Pathfinding is disabled or terrain data unavailable", 4);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Failed to initialize Advanced Pathfinding: {ex.Message}", 1);
         }
     }
 

@@ -52,6 +52,16 @@ public class FollowerSettings : ISettings
     [Menu("Smart UI Avoidance/Exclude Right Edge")] public ToggleNode ExcludeRightEdge { get; set; } = new ToggleNode(false);
     [Menu("Smart UI Avoidance/Right Edge Exclusion Width")] public RangeNode<int> RightEdgeExclusionWidth { get; set; } = new RangeNode<int>(50, 20, 150);
     
+    // Advanced Pathfinding
+    [Menu("Advanced Pathfinding/Enable Advanced Pathfinding")] public ToggleNode EnableAdvancedPathfinding { get; set; } = new ToggleNode(true);
+    [Menu("Advanced Pathfinding/Path Optimization Level")] public RangeNode<int> PathOptimizationLevel { get; set; } = new RangeNode<int>(2, 1, 3);
+    [Menu("Advanced Pathfinding/Max Pathfinding Time (ms)")] public RangeNode<int> MaxPathfindingTime { get; set; } = new RangeNode<int>(50, 10, 200);
+    [Menu("Advanced Pathfinding/Path Smoothing")] public ToggleNode EnablePathSmoothing { get; set; } = new ToggleNode(true);
+    [Menu("Advanced Pathfinding/Cache Distance Fields")] public ToggleNode CacheDistanceFields { get; set; } = new ToggleNode(true);
+    [Menu("Advanced Pathfinding/Show Debug Paths")] public ToggleNode ShowDebugPaths { get; set; } = new ToggleNode(false);
+    [Menu("Advanced Pathfinding/Path Update Frequency (ms)")] public RangeNode<int> PathUpdateFrequency { get; set; } = new RangeNode<int>(250, 100, 1000);
+    [Menu("Advanced Pathfinding/Recalculate Path Distance")] public RangeNode<int> RecalculatePathDistance { get; set; } = new RangeNode<int>(300, 100, 1000);
+    
     // Leader Management
     [Menu("Leader Management/Enable Multiple Leaders")] public ToggleNode EnableMultipleLeaders { get; set; } = new ToggleNode(false);
     [Menu("Leader Management/Leader Names (comma separated)")] public TextNode LeaderNames { get; set; } = new TextNode("");
