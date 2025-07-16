@@ -182,6 +182,7 @@ public class FollowerSettings : ISettings
     // Debug & Visualization
     [Menu("Debug & Visualization/Show PathStatus Debug")] public ToggleNode ShowPathStatusDebug { get; set; } = new ToggleNode(false);
     [Menu("Debug & Visualization/Show Terrain Visualization")] public ToggleNode ShowTerrainVisualization { get; set; } = new ToggleNode(false);
+    [Menu("Debug & Visualization/Show Enhanced Terrain Debug")] public ToggleNode ShowEnhancedTerrainDebug { get; set; } = new ToggleNode(false);
     [Menu("Debug & Visualization/Show Task Debug")] public ToggleNode ShowTaskDebug { get; set; } = new ToggleNode(false);
     [Menu("Debug & Visualization/Show Entity Debug")] public ToggleNode ShowEntityDebug { get; set; } = new ToggleNode(false);
     [Menu("Debug & Visualization/Show Raycast Debug")] public ToggleNode ShowRaycastDebug { get; set; } = new ToggleNode(false);

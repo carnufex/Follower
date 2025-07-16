@@ -64,8 +64,11 @@ namespace Follower
                 _grid[y] = new bool[_width];
                 for (int x = 0; x < _width; x++)
                 {
-                    // Consider terrain values 1, 2, 3 as walkable (similar to Radar plugin)
-                    _grid[y][x] = terrainData[y, x] is 1 or 2 or 3;
+                    // Consider terrain values 1, 2 as walkable (updated for enhanced terrain processing)
+                    // Value 1 = highly walkable (from processed terrain values 4,5)
+                    // Value 2 = walkable but may require dash (from processed terrain values 1,2,3)
+                    // Value 255 = blocked (from processed terrain value 0 or other non-walkable values)
+                    _grid[y][x] = terrainData[y, x] is 1 or 2;
                 }
             }
         }

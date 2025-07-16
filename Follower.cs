@@ -634,46 +634,80 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
 
 
-        var terrain = GameController.IngameState.Data.Terrain;
-        var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
-        _numCols = (int)(terrain.NumCols - 1) * 23;
-        _numRows = (int)(terrain.NumRows - 1) * 23;
-        if ((_numCols & 1) > 0)
-            _numCols++;
-
-        _tiles = new byte[_numCols, _numRows];
-        int dataIndex = 0;
-        for (int y = 0; y < _numRows; y++)
+        // Use processed pathfinding data like Radar plugin for better terrain accuracy
+        var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
+        var areaDimensions = GameController.IngameState.Data.AreaDimensions;
+        
+        if (processedTerrainData != null && areaDimensions.HasValue)
         {
-            for (int x = 0; x < _numCols; x += 2)
+            _numCols = areaDimensions.Value.X;
+            _numRows = areaDimensions.Value.Y;
+            _tiles = new byte[_numCols, _numRows];
+            
+            // Process terrain data using Radar plugin's approach
+            // Values 1,2,3,4,5 are considered pathable, with 4,5 being highly walkable
+            for (int y = 0; y < _numRows && y < processedTerrainData.Length; y++)
             {
-                var b = terrainBytes[dataIndex + (x >> 1)];
-                _tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
-                _tiles[x + 1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
+                for (int x = 0; x < _numCols && x < processedTerrainData[y].Length; x++)
+                {
+                    var terrainValue = processedTerrainData[y][x];
+                    
+                    // Convert to our internal representation
+                    if (terrainValue == 4 || terrainValue == 5)
+                    {
+                        _tiles[x, y] = 1; // Highly walkable
+                    }
+                    else if (terrainValue == 1 || terrainValue == 2 || terrainValue == 3)
+                    {
+                        _tiles[x, y] = 2; // Walkable but may require dash
+                    }
+                    else
+                    {
+                        _tiles[x, y] = 255; // Blocked
+                    }
+                }
             }
-            dataIndex += terrain.BytesPerRow;
         }
-
-        terrainBytes = GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-        _numCols = (int)(terrain.NumCols - 1) * 23;
-        _numRows = (int)(terrain.NumRows - 1) * 23;
-        if ((_numCols & 1) > 0)
-            _numCols++;
-        dataIndex = 0;
-        for (int y = 0; y < _numRows; y++)
+        else
         {
-            for (int x = 0; x < _numCols; x += 2)
-            {
-                var b = terrainBytes[dataIndex + (x >> 1)];
+            // Fallback to original method if processed data is not available
+            var terrain = GameController.IngameState.Data.Terrain;
+            var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+            _numCols = (int)(terrain.NumCols - 1) * 23;
+            _numRows = (int)(terrain.NumRows - 1) * 23;
+            if ((_numCols & 1) > 0)
+                _numCols++;
 
-                var current = _tiles[x, y];
-                if (current == 255)
-                    _tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
-                current = _tiles[x + 1, y];
-                if (current == 255)
-                    _tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+            _tiles = new byte[_numCols, _numRows];
+            int dataIndex = 0;
+            for (int y = 0; y < _numRows; y++)
+            {
+                for (int x = 0; x < _numCols; x += 2)
+                {
+                    var b = terrainBytes[dataIndex + (x >> 1)];
+                    _tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
+                    _tiles[x + 1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
+                }
+                dataIndex += terrain.BytesPerRow;
             }
-            dataIndex += terrain.BytesPerRow;
+
+            terrainBytes = GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+            dataIndex = 0;
+            for (int y = 0; y < _numRows; y++)
+            {
+                for (int x = 0; x < _numCols; x += 2)
+                {
+                    var b = terrainBytes[dataIndex + (x >> 1)];
+
+                    var current = _tiles[x, y];
+                    if (current == 255)
+                        _tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
+                    current = _tiles[x + 1, y];
+                    if (current == 255)
+                        _tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+                }
+                dataIndex += terrain.BytesPerRow;
+            }
         }
 
         // Removed PNG generation to prevent accumulating files and improve performance
@@ -2787,45 +2821,82 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (DateTime.Now - _lastTerrainRefresh < TimeSpan.FromMilliseconds(Settings.TerrainRefreshRate.Value))
                 return;
                 
-            // Update terrain data from the game using the correct ExileCore API
-            var terrain = GameController.IngameState.Data.Terrain;
+            // Use processed pathfinding data like Radar plugin for better terrain accuracy
+            var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
+            var areaDimensions = GameController.IngameState.Data.AreaDimensions;
+            
+            if (processedTerrainData != null && areaDimensions.HasValue)
+            {
+                _numCols = areaDimensions.Value.X;
+                _numRows = areaDimensions.Value.Y;
+                _tiles = new byte[_numCols, _numRows];
                 
-            // Process terrain data similar to AreaChange method
-            var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
-            _numCols = (int)(terrain.NumCols - 1) * 23;
-            _numRows = (int)(terrain.NumRows - 1) * 23;
-            if ((_numCols & 1) > 0)
-                _numCols++;
-
-            _tiles = new byte[_numCols, _numRows];
-            int dataIndex = 0;
-            for (int y = 0; y < _numRows; y++)
-            {
-                for (int x = 0; x < _numCols; x += 2)
+                // Process terrain data using Radar plugin's approach
+                // Values 1,2,3,4,5 are considered pathable, with 4,5 being highly walkable
+                for (int y = 0; y < _numRows && y < processedTerrainData.Length; y++)
                 {
-                    var b = terrainBytes[dataIndex + (x >> 1)];
-                    _tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
-                    _tiles[x + 1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
+                    for (int x = 0; x < _numCols && x < processedTerrainData[y].Length; x++)
+                    {
+                        var terrainValue = processedTerrainData[y][x];
+                        
+                        // Convert to our internal representation
+                        if (terrainValue == 4 || terrainValue == 5)
+                        {
+                            _tiles[x, y] = 1; // Highly walkable
+                        }
+                        else if (terrainValue == 1 || terrainValue == 2 || terrainValue == 3)
+                        {
+                            _tiles[x, y] = 2; // Walkable but may require dash
+                        }
+                        else
+                        {
+                            _tiles[x, y] = 255; // Blocked
+                        }
+                    }
                 }
-                dataIndex += terrain.BytesPerRow;
             }
-
-            // Process ranged layer for dashable terrain
-            terrainBytes = GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-            dataIndex = 0;
-            for (int y = 0; y < _numRows; y++)
+            else
             {
-                for (int x = 0; x < _numCols; x += 2)
+                // Fallback to original method if processed data is not available
+                var terrain = GameController.IngameState.Data.Terrain;
+                    
+                // Process terrain data similar to AreaChange method
+                var terrainBytes = GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+                _numCols = (int)(terrain.NumCols - 1) * 23;
+                _numRows = (int)(terrain.NumRows - 1) * 23;
+                if ((_numCols & 1) > 0)
+                    _numCols++;
+
+                _tiles = new byte[_numCols, _numRows];
+                int dataIndex = 0;
+                for (int y = 0; y < _numRows; y++)
                 {
-                    var b = terrainBytes[dataIndex + (x >> 1)];
-                    var current = _tiles[x, y];
-                    if (current == 255)
-                        _tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
-                    current = _tiles[x + 1, y];
-                    if (current == 255)
-                        _tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+                    for (int x = 0; x < _numCols; x += 2)
+                    {
+                        var b = terrainBytes[dataIndex + (x >> 1)];
+                        _tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
+                        _tiles[x + 1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
+                    }
+                    dataIndex += terrain.BytesPerRow;
                 }
-                dataIndex += terrain.BytesPerRow;
+
+                // Process ranged layer for dashable terrain
+                terrainBytes = GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+                dataIndex = 0;
+                for (int y = 0; y < _numRows; y++)
+                {
+                    for (int x = 0; x < _numCols; x += 2)
+                    {
+                        var b = terrainBytes[dataIndex + (x >> 1)];
+                        var current = _tiles[x, y];
+                        if (current == 255)
+                            _tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
+                        current = _tiles[x + 1, y];
+                        if (current == 255)
+                            _tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+                    }
+                    dataIndex += terrain.BytesPerRow;
+                }
             }
             
             _lastTerrainRefresh = DateTime.Now;
@@ -2897,10 +2968,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 Graphics.DrawBox(rect, color);
                 
                 // Optionally show the terrain value as text for debugging
-                if (Settings.ShowRaycastDebug.Value)
-                {
-                    Graphics.DrawText(terrainValue.ToString(), screenPos, SharpDX.Color.White, 8);
-                }
+                // DISABLED: Terrain value text display to prevent random 1s and 2s on screen
+                // if (Settings.ShowRaycastDebug.Value)
+                // {
+                //     Graphics.DrawText(terrainValue.ToString(), screenPos, SharpDX.Color.White, 8);
+                // }
             }
         }
     }
@@ -3385,6 +3457,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         else
         {
             Graphics.DrawText("ADVANCED PATHFINDING: DISABLED", new Vector2(500, 380), SharpDX.Color.Orange);
+        }
+        
+        // Show Enhanced Terrain Debug information
+        if (Settings.ShowEnhancedTerrainDebug.Value)
+        {
+            var processedTerrainData = GameController.IngameState.Data.RawPathfindingData;
+            var areaDimensions = GameController.IngameState.Data.AreaDimensions;
+            
+            if (processedTerrainData != null && areaDimensions.HasValue)
+            {
+                Graphics.DrawText("ENHANCED TERRAIN: ACTIVE (Using Radar-style processing)", 
+                    new Vector2(500, 420), SharpDX.Color.LightGreen);
+                Graphics.DrawText($"Terrain Size: {areaDimensions.Value.X}x{areaDimensions.Value.Y}", 
+                    new Vector2(500, 440), SharpDX.Color.White);
+            }
+            else
+            {
+                Graphics.DrawText("ENHANCED TERRAIN: FALLBACK (Using legacy processing)", 
+                    new Vector2(500, 420), SharpDX.Color.Yellow);
+            }
         }
         
         // Show gem leveling status
