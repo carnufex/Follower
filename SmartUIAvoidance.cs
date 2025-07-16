@@ -45,6 +45,14 @@ namespace Follower
         /// </summary>
         public Vector2 GetSafeScreenPosition(Vector3 worldPosition)
         {
+            return GetSafeScreenPosition(worldPosition, false);
+        }
+        
+        /// <summary>
+        /// Gets a safe screen position that avoids UI elements with option to override safe zone constraints
+        /// </summary>
+        public Vector2 GetSafeScreenPosition(Vector3 worldPosition, bool allowDistantTarget)
+        {
             UpdateSafeZone();
             
             // First convert world position to screen position
@@ -52,14 +60,29 @@ namespace Follower
             var screenPos = _gameController.Game.IngameState.Camera.WorldToScreen(worldPosition);
             var absoluteScreenPos = screenPos + windowRect.Location;
             
-            // Step 1: Constrain to safe zone
-            var constrainedPos = ConstrainToSafeZone(absoluteScreenPos);
+            // Calculate distance from player to world position to determine if this is a distant target
+            var playerPos = _gameController.Game.IngameState.Data.LocalPlayer.Pos;
+            var distanceToTarget = Vector3.Distance(playerPos, worldPosition);
+            var isDistantTarget = distanceToTarget > _settings.DistantTargetThreshold.Value || allowDistantTarget;
             
-            // Step 2: Avoid UI elements
+            Vector2 constrainedPos;
+            
+            if (isDistantTarget)
+            {
+                // For distant targets, use relaxed constraints (allow wider movement area)
+                constrainedPos = ConstrainToScreenBounds(absoluteScreenPos);
+            }
+            else
+            {
+                // For close targets, use strict safe zone constraints
+                constrainedPos = ConstrainToSafeZone(absoluteScreenPos);
+            }
+            
+            // Step 2: Avoid UI elements (always apply this)
             var uiAvoidedPos = AvoidUIElements(constrainedPos);
             
             // Step 3: Final validation and fallback
-            var finalPos = ValidateAndFallback(uiAvoidedPos, worldPosition);
+            var finalPos = ValidateAndFallback(uiAvoidedPos, worldPosition, isDistantTarget);
             
             return finalPos;
         }
@@ -80,6 +103,20 @@ namespace Follower
             var constrainedPos = _safeZoneCenter + normalizedDirection * _safeZoneRadius;
             
             return constrainedPos;
+        }
+        
+        /// <summary>
+        /// Constrains position to screen bounds with larger margin for distant targets
+        /// </summary>
+        private Vector2 ConstrainToScreenBounds(Vector2 position)
+        {
+            var windowRect = _gameController.Window.GetWindowRectangle();
+            var margin = 50; // Keep some margin from screen edges
+            
+            var constrainedX = Math.Max(windowRect.X + margin, Math.Min(windowRect.X + windowRect.Width - margin, position.X));
+            var constrainedY = Math.Max(windowRect.Y + margin, Math.Min(windowRect.Y + windowRect.Height - margin, position.Y));
+            
+            return new Vector2(constrainedX, constrainedY);
         }
         
         /// <summary>
@@ -369,7 +406,7 @@ namespace Follower
         /// <summary>
         /// Final validation and fallback for the position
         /// </summary>
-        private Vector2 ValidateAndFallback(Vector2 position, Vector3 worldPosition)
+        private Vector2 ValidateAndFallback(Vector2 position, Vector3 worldPosition, bool isDistantTarget)
         {
             // Add small random offset to prevent clicking on exact same pixel
             var randomOffset = new Vector2(
@@ -379,17 +416,68 @@ namespace Follower
             
             var finalPosition = position + randomOffset;
             
-            // Final constraint to safe zone
-            finalPosition = ConstrainToSafeZone(finalPosition);
+            // Apply appropriate constraint based on target distance
+            if (isDistantTarget)
+            {
+                // For distant targets, only constrain to screen bounds
+                finalPosition = ConstrainToScreenBounds(finalPosition);
+            }
+            else
+            {
+                // For close targets, use strict safe zone constraints
+                finalPosition = ConstrainToSafeZone(finalPosition);
+            }
             
             // Ensure we're not on a UI element
             if (GetIntersectingUIElement(finalPosition) != null)
             {
-                // Last resort: use safe zone center
-                finalPosition = _safeZoneCenter;
+                if (isDistantTarget)
+                {
+                    // For distant targets, try to find a position that maintains general direction
+                    finalPosition = FindDistantTargetFallback(worldPosition);
+                }
+                else
+                {
+                    // For close targets, use safe zone center
+                    finalPosition = _safeZoneCenter;
+                }
             }
             
             return finalPosition;
+        }
+        
+        /// <summary>
+        /// Finds a fallback position for distant targets that maintains general direction
+        /// </summary>
+        private Vector2 FindDistantTargetFallback(Vector3 worldPosition)
+        {
+            var windowRect = _gameController.Window.GetWindowRectangle();
+            var screenPos = _gameController.Game.IngameState.Camera.WorldToScreen(worldPosition);
+            var absoluteScreenPos = screenPos + windowRect.Location;
+            
+            // Calculate direction from screen center to target
+            var screenCenter = new Vector2(
+                windowRect.X + windowRect.Width / 2,
+                windowRect.Y + windowRect.Height / 2
+            );
+            
+            var direction = absoluteScreenPos - screenCenter;
+            var normalizedDirection = Vector2.Normalize(direction);
+            
+            // Try positions along the direction vector at different distances
+            for (int distance = 100; distance <= 400; distance += 50)
+            {
+                var candidatePos = screenCenter + normalizedDirection * distance;
+                candidatePos = ConstrainToScreenBounds(candidatePos);
+                
+                if (GetIntersectingUIElement(candidatePos) == null)
+                {
+                    return candidatePos;
+                }
+            }
+            
+            // If no good position found, use safe zone center as last resort
+            return _safeZoneCenter;
         }
         
         /// <summary>

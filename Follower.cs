@@ -3166,7 +3166,18 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Show Smart UI Avoidance status and debug rectangles
         if (Settings.EnableSmartUIAvoidance.Value && _smartUIAvoidance != null)
         {
-            Graphics.DrawText("SMART UI AVOIDANCE: ACTIVE", new Vector2(500, 320), SharpDX.Color.LightGreen);
+            // Check if we're using relaxed constraints for distant targets
+            var isUsingRelaxedConstraints = false;
+            if (_followTarget != null)
+            {
+                var playerPos = GameController.Player.Pos;
+                var distanceToLeader = Vector3.Distance(playerPos, _followTarget.Pos);
+                isUsingRelaxedConstraints = distanceToLeader > Settings.DistantTargetThreshold.Value;
+            }
+            
+            var statusText = isUsingRelaxedConstraints ? "SMART UI AVOIDANCE: RELAXED" : "SMART UI AVOIDANCE: ACTIVE";
+            var statusColor = isUsingRelaxedConstraints ? SharpDX.Color.Orange : SharpDX.Color.LightGreen;
+            Graphics.DrawText(statusText, new Vector2(500, 320), statusColor);
             
             // Draw UI debug rectangles if enabled
             if (Settings.ShowUIDebugRectangles.Value)
@@ -3193,6 +3204,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 Graphics.DrawBox(safeZoneRect, SharpDX.Color.Green, 2);
                 
                 Graphics.DrawText($"UI ELEMENTS: {uiElements.Count}", new Vector2(500, 340), SharpDX.Color.Yellow);
+                
+                if (isUsingRelaxedConstraints)
+                {
+                    Graphics.DrawText("USING RELAXED CONSTRAINTS", new Vector2(500, 360), SharpDX.Color.Orange);
+                }
             }
         }
         else
@@ -3326,7 +3342,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Use Smart UI Avoidance if enabled, otherwise fallback to basic method
         if (Settings.EnableSmartUIAvoidance.Value && _smartUIAvoidance != null)
         {
-            return _smartUIAvoidance.GetSafeScreenPosition(worldPos);
+            // Check if we're following a distant leader
+            var playerPos = GameController.Player.Pos;
+            var distanceToTarget = Vector3.Distance(playerPos, worldPos);
+            var isDistantTarget = distanceToTarget > Settings.DistantTargetThreshold.Value;
+            
+            // Also check if we're actively following the leader and they're far away
+            var isFollowingDistantLeader = _followTarget != null && 
+                Vector3.Distance(playerPos, _followTarget.Pos) > Settings.DistantTargetThreshold.Value &&
+                Vector3.Distance(worldPos, _followTarget.Pos) < Settings.PathfindingNodeDistance.Value;
+            
+            return _smartUIAvoidance.GetSafeScreenPosition(worldPos, isDistantTarget || isFollowingDistantLeader);
         }
         else
         {

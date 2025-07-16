@@ -41,6 +41,7 @@ public class FollowerSettings : ISettings
     [Menu("Smart UI Avoidance/Enable Smart UI Avoidance")] public ToggleNode EnableSmartUIAvoidance { get; set; } = new ToggleNode(true);
     [Menu("Smart UI Avoidance/UI Avoidance Distance")] public RangeNode<int> UIAvoidanceDistance { get; set; } = new RangeNode<int>(50, 20, 150);
     [Menu("Smart UI Avoidance/Mouse Random Offset")] public RangeNode<int> MouseRandomOffset { get; set; } = new RangeNode<int>(8, 2, 20);
+    [Menu("Smart UI Avoidance/Distant Target Threshold")] public RangeNode<int> DistantTargetThreshold { get; set; } = new RangeNode<int>(1000, 500, 3000);
     [Menu("Smart UI Avoidance/Show UI Debug Rectangles")] public ToggleNode ShowUIDebugRectangles { get; set; } = new ToggleNode(false);
     [Menu("Smart UI Avoidance/Exclude Top Edge")] public ToggleNode ExcludeTopEdge { get; set; } = new ToggleNode(true);
     [Menu("Smart UI Avoidance/Top Edge Exclusion Height")] public RangeNode<int> TopEdgeExclusionHeight { get; set; } = new RangeNode<int>(50, 20, 150);
