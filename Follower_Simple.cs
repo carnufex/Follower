@@ -171,20 +171,20 @@ namespace Follower
                     break;
             }
             
-            // Remove completed tasks
-            if (taskDistance <= currentTask.Distance)
+                    // Remove completed tasks
+        if (taskDistance <= currentTask.Bounds)
+        {
+            _tasks.RemoveAt(0);
+        }
+        else
+        {
+            // Track attempts and remove if too many
+            currentTask.AttemptCount++;
+            if (currentTask.AttemptCount > Settings.MaxTaskAttempts.Value)
             {
                 _tasks.RemoveAt(0);
             }
-            else
-            {
-                // Track attempts and remove if too many
-                currentTask.AttemptCount++;
-                if (currentTask.AttemptCount > Settings.MaxTaskAttempts.Value)
-                {
-                    _tasks.RemoveAt(0);
-                }
-            }
+        }
         }
         
         private void ExecuteMovementTask(TaskNode task, float distance)

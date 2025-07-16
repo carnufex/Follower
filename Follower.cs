@@ -354,7 +354,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
         
         // Remove completed tasks
-        if (taskDistance <= currentTask.Distance)
+        if (taskDistance <= currentTask.Bounds)
         {
             _tasks.RemoveAt(0);
         }
