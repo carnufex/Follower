@@ -95,9 +95,18 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         try
         {
-            return GameController.Entities
+            // First try to find in visible entities (most common case)
+            var visibleTarget = GameController.Entities
                 .Where(x => x.Type == EntityType.Player)
                 .FirstOrDefault(x => x.GetComponent<Player>()?.PlayerName?.ToLower() == leaderName);
+            
+            if (visibleTarget != null)
+                return visibleTarget;
+            
+            // If not visible, try EntityListWrapper which includes off-screen entities
+            return GameController.EntityListWrapper.Entities
+                .Where(x => x.Type == EntityType.Player)
+                .FirstOrDefault(x => x.IsValid && x.GetComponent<Player>()?.PlayerName?.ToLower() == leaderName);
         }
         catch
         {
