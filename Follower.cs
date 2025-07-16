@@ -222,7 +222,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// <summary>
     /// Gets the first gem that can be leveled
     /// </summary>
-    private Element GetFirstLevelableGem()
+    private ExileCore.PoEMemory.Elements.Element GetFirstLevelableGem()
     {
         try
         {
