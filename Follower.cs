@@ -2425,7 +2425,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         if (!Settings.EnablePortalAvoidance.Value)
             return false;
             
-        foreach (var transition in _areaTransitions.Values)
+        // Create a safe copy to avoid collection modification during enumeration
+        var transitionValuesCopy = _areaTransitions.Values.ToList();
+        foreach (var transition in transitionValuesCopy)
         {
             if (transition.Type == ExileCore.Shared.Enums.EntityType.Portal || 
                 transition.Type == ExileCore.Shared.Enums.EntityType.TownPortal)
@@ -2987,12 +2989,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
         var yOffset = 340;
         
-        Graphics.DrawText($"Tasks: {_tasks.Count}", new Vector2(10, yOffset), SharpDX.Color.White);
+        // Create a safe copy to avoid collection modification during enumeration
+        var tasksCopy = new List<TaskNode>(_tasks);
+        
+        Graphics.DrawText($"Tasks: {tasksCopy.Count}", new Vector2(10, yOffset), SharpDX.Color.White);
         yOffset += 20;
         
-        for (int i = 0; i < Math.Min(_tasks.Count, 10); i++)
+        for (int i = 0; i < Math.Min(tasksCopy.Count, 10); i++)
         {
-            var task = _tasks[i];
+            var task = tasksCopy[i];
             var taskText = $"  {i}: {task.Type} at ({task.WorldPosition.X:F0}, {task.WorldPosition.Y:F0}) - Attempts: {task.AttemptCount}";
             var taskColor = i == 0 ? SharpDX.Color.Yellow : SharpDX.Color.Gray;
             
@@ -3033,7 +3038,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         yOffset += 20;
         
         var transitionCount = 0;
-        foreach (var transition in _areaTransitions.Values.Take(5))
+        // Create a safe copy to avoid collection modification during enumeration
+        var transitionValuesCopy = _areaTransitions.Values.ToList();
+        foreach (var transition in transitionValuesCopy.Take(5))
         {
             var transText = $"  {transitionCount}: {transition.RenderName} at ({transition.Pos.X:F0}, {transition.Pos.Y:F0})";
             Graphics.DrawText(transText, new Vector2(10, yOffset), SharpDX.Color.Cyan);
@@ -3268,12 +3275,16 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     public override void Render()
     {
         if (_tasks != null && _tasks.Count > 1)
-            for (var i = 1; i < _tasks.Count; i++)
+        {
+            // Create a safe copy to avoid collection modification during enumeration
+            var tasksCopy = new List<TaskNode>(_tasks);
+            for (var i = 1; i < tasksCopy.Count; i++)
             {
-                var start = WorldToValidScreenPosition(_tasks[i - 1].WorldPosition);
-                var end = WorldToValidScreenPosition(_tasks[i].WorldPosition);
+                var start = WorldToValidScreenPosition(tasksCopy[i - 1].WorldPosition);
+                var end = WorldToValidScreenPosition(tasksCopy[i].WorldPosition);
                 Graphics.DrawLine(start, end, 2, SharpDX.Color.Pink);
             }
+        }
         
         // Draw last known good position if we're in teleport search mode
         if (_isSearchingForTeleport && _lastKnownGoodPosition != Vector3.Zero)
@@ -3423,7 +3434,10 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 var playerPos = GameController.Player.Pos;
                 Vector2 lastPoint = default;
                 
-                foreach (var pathNode in _currentPath)
+                // Create a safe copy to avoid collection modification during enumeration
+                var pathCopy = new List<Vector2>(_currentPath);
+                
+                foreach (var pathNode in pathCopy)
                 {
                     var gridPos = new Vector2(pathNode.X, pathNode.Y);
                     var worldPos2D = gridPos.GridToWorld();
@@ -3451,7 +3465,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     lastPoint = screenPos;
                 }
                 
-                Graphics.DrawText($"PATH NODES: {_currentPath.Count}", new Vector2(500, 400), SharpDX.Color.Yellow);
+                Graphics.DrawText($"PATH NODES: {pathCopy.Count}", new Vector2(500, 400), SharpDX.Color.Yellow);
             }
         }
         else
@@ -3587,7 +3601,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
         
         var counter = 0;
-        foreach (var transition in _areaTransitions)
+        // Create a safe copy to avoid collection modification during enumeration
+        var transitionsCopy = new Dictionary<uint, Entity>(_areaTransitions);
+        foreach (var transition in transitionsCopy)
         {
             counter++;
             Graphics.DrawText($"{transition.Key} at {transition.Value.Pos.X} {transition.Value.Pos.Y}", new Vector2(100, 120 + counter * 20));
