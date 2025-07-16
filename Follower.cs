@@ -1,4 +1,5 @@
 ﻿using ExileCore;
+using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.PoEMemory.Elements;
@@ -222,7 +223,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// <summary>
     /// Gets the first gem that can be leveled
     /// </summary>
-    private ExileCore.PoEMemory.Elements.Element GetFirstLevelableGem()
+    private GemLevelUpElement GetFirstLevelableGem()
     {
         try
         {
