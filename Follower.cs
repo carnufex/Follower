@@ -94,13 +94,42 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _currentPathIndex = 0;
         _lastLeaderGridPosition = new Vector2i(-1, -1);
         
-        // Reset stuck detection
+        // Reset state for new area
+        _tasks.Clear();
+        _followTarget = null;
+        _lastTargetPosition = Vector3.Zero;
+        _areaTransitions.Clear();
+        _hasUsedWP = false;
+        
+        // Reset gem leveling state
+        _lastGemLevelCheck = DateTime.MinValue;
+        _isLevelingGems = false;
+        
+        // Reset stuck detection state
+        _lastPlayerPosition = Vector3.Zero;
+        _lastPositionUpdate = DateTime.MinValue;
+        _recentPositions.Clear();
         _isStuck = false;
+        _stuckDetectionTime = DateTime.MinValue;
+        _stuckPosition = Vector3.Zero;
+        _stuckRecoveryAttempts = 0;
         _alternativeWaypoints.Clear();
         _usingAlternativeRoute = false;
         
-        // Clear tasks
-        _tasks.Clear();
+        // Load area transitions
+        foreach (var entity in GameController.EntityListWrapper.Entities)
+        {
+            if (entity.Type == EntityType.AreaTransition || 
+                entity.Type == EntityType.Portal || 
+                entity.Type == EntityType.TownPortal)
+            {
+                if (!_areaTransitions.ContainsKey(entity.Id))
+                    _areaTransitions.Add(entity.Id, entity);
+            }
+        }
+        
+        // Initialize terrain data (simplified)
+        InitializeTerrain();
         
         // Initialize pathfinder for new area
         InitializePathFinder();
@@ -1415,45 +1444,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
     }
 
-    public override void AreaChange(AreaInstance area)
-    {
-        // Reset state for new area
-        _tasks.Clear();
-        _followTarget = null;
-        _lastTargetPosition = Vector3.Zero;
-        _areaTransitions.Clear();
-        _hasUsedWP = false;
-        
-        // Reset gem leveling state
-        _lastGemLevelCheck = DateTime.MinValue;
-        _isLevelingGems = false;
-        
-        // Reset stuck detection state
-        _lastPlayerPosition = Vector3.Zero;
-        _lastPositionUpdate = DateTime.MinValue;
-        _recentPositions.Clear();
-        _isStuck = false;
-        _stuckDetectionTime = DateTime.MinValue;
-        _stuckPosition = Vector3.Zero;
-        _stuckRecoveryAttempts = 0;
-        _alternativeWaypoints.Clear();
-        _usingAlternativeRoute = false;
-        
-        // Load area transitions
-        foreach (var entity in GameController.EntityListWrapper.Entities)
-        {
-            if (entity.Type == EntityType.AreaTransition || 
-                entity.Type == EntityType.Portal || 
-                entity.Type == EntityType.TownPortal)
-            {
-                if (!_areaTransitions.ContainsKey(entity.Id))
-                    _areaTransitions.Add(entity.Id, entity);
-            }
-        }
-        
-        // Initialize terrain data (simplified)
-        InitializeTerrain();
-    }
+
     
     private void InitializeTerrain()
     {
