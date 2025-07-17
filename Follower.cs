@@ -269,39 +269,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         return _followTarget.Pos;
     }
     
-    /// <summary>
-    /// Gets a safe position to follow during combat
-    /// </summary>
-    private Vector3 GetSafeFollowPosition()
-    {
-        if (_followTarget == null)
-            return GameController.Player.Pos;
-        
-        var leaderPos = _followTarget.Pos;
-        var playerPos = GameController.Player.Pos;
-        
-        // Calculate a position that's slightly behind the leader
-        var direction = playerPos - leaderPos;
-        var length = direction.Length();
-        
-        // Normalize the direction vector manually
-        if (length > 0)
-        {
-            direction = direction / length;
-        }
-        else
-        {
-            // If positions are the same, use a default safe direction
-            direction = new Vector3(0, 1, 0);
-        }
-        
-        var safeDistance = GetSmartFollowDistance(Vector3.Distance(playerPos, leaderPos));
-        
-        // Position slightly behind and to the side for safety
-        var safePosition = leaderPos + direction * safeDistance;
-        
-        return safePosition;
-    }
+
 
     /// <summary>
     /// Checks for gems that need leveling and triggers the leveling process
@@ -484,19 +452,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var followDistance = GetSmartFollowDistance(distance);
         var shouldFollow = ShouldFollowInCurrentState(distance);
         
-        // If leader is close, don't add tasks unless close follow is enabled or we need to maintain distance
+        // If leader is close, don't add tasks unless close follow is enabled
         if (distance < Settings.Movement.ClearPathDistance.Value)
         {
-            // In combat mode, maintain a safer distance
-            if (_combatModeActive && distance < followDistance)
+            if (Settings.Movement.IsCloseFollowEnabled.Value && distance > followDistance && shouldFollow)
             {
-                // Move to a safer position during combat
-                var safePosition = GetSafeFollowPosition();
-                _tasks.Add(new TaskNode(safePosition, followDistance, TaskNode.TaskNodeType.Movement));
-            }
-            else if (Settings.Movement.IsCloseFollowEnabled.Value && distance > Settings.Movement.PathfindingNodeDistance.Value && shouldFollow)
-            {
-                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+                _tasks.Add(new TaskNode(_followTarget.Pos, followDistance));
             }
             
             // Check for waypoint claiming (only when not in combat)
