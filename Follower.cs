@@ -41,7 +41,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     public override bool Initialise()
     {
         Name = "Follower";
-        Input.RegisterKey(Settings.MovementKey.Value);
+        Input.RegisterKey(Settings.Movement.MovementKey.Value);
         Input.RegisterKey(Settings.ToggleFollower.Value);
         
         Settings.ToggleFollower.OnValueChanged += () => { 
@@ -150,13 +150,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// </summary>
     private void CheckAndLevelGems()
     {
-        if (!Settings.AutoLevelGems.Value || !GameController.Player.IsAlive)
+        if (!Settings.Gems.AutoLevelGems.Value || !GameController.Player.IsAlive)
             return;
 
         var now = DateTime.Now;
         
         // Check if enough time has passed since last gem level check
-        if (now - _lastGemLevelCheck < TimeSpan.FromMilliseconds(Settings.GemLevelCheckInterval.Value))
+        if (now - _lastGemLevelCheck < TimeSpan.FromMilliseconds(Settings.Gems.GemLevelCheckInterval.Value))
             return;
 
         _lastGemLevelCheck = now;
@@ -164,15 +164,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Determine if we should level gems based on conditions
         bool shouldLevelGems = false;
         
-        if (Settings.LevelGemsWhenClose.Value && _followTarget != null)
+        if (Settings.Gems.LevelGemsWhenClose.Value && _followTarget != null)
         {
             var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-            if (distance <= Settings.NormalFollowDistance.Value)
+            if (distance <= Settings.Movement.NormalFollowDistance.Value)
             {
                 shouldLevelGems = true;
             }
         }
-        else if (Settings.LevelGemsWhenStopped.Value && _tasks.Count == 0)
+        else if (Settings.Gems.LevelGemsWhenStopped.Value && _tasks.Count == 0)
         {
             shouldLevelGems = true;
         }
@@ -307,15 +307,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             // Leader not found, try to use last known position for area transition
             if (_lastTargetPosition != Vector3.Zero && _tasks.Count == 0)
             {
-                var nearbyTransition = _areaTransitions.Values
-                    .Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.ClearPathDistance.Value)
-                    .OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
-                    .FirstOrDefault();
-                
-                if (nearbyTransition != null)
-                {
-                    _tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
-                }
+                            var nearbyTransition = _areaTransitions.Values
+                .Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.Movement.ClearPathDistance.Value)
+                .OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
+                .FirstOrDefault();
+            
+            if (nearbyTransition != null)
+            {
+                _tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.Movement.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
+            }
             }
             return;
         }
@@ -323,11 +323,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
         
         // If leader is close, don't add tasks unless close follow is enabled
-        if (distance < Settings.ClearPathDistance.Value)
+        if (distance < Settings.Movement.ClearPathDistance.Value)
         {
-            if (Settings.IsCloseFollowEnabled.Value && distance > Settings.PathfindingNodeDistance.Value)
+            if (Settings.Movement.IsCloseFollowEnabled.Value && distance > Settings.Movement.PathfindingNodeDistance.Value)
             {
-                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance.Value));
+                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
             }
             
             // Check for waypoint claiming
@@ -335,12 +335,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             {
                 var waypoint = GameController.EntityListWrapper.Entities.FirstOrDefault(e => 
                     e.Type == EntityType.Waypoint && 
-                    Vector3.Distance(GameController.Player.Pos, e.Pos) < Settings.ClearPathDistance.Value);
+                    Vector3.Distance(GameController.Player.Pos, e.Pos) < Settings.Movement.ClearPathDistance.Value);
                     
                 if (waypoint != null)
                 {
                     _hasUsedWP = true;
-                    _tasks.Add(new TaskNode(waypoint.Pos, Settings.ClearPathDistance.Value, TaskNode.TaskNodeType.ClaimWaypoint));
+                    _tasks.Add(new TaskNode(waypoint.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.ClaimWaypoint));
                 }
             }
             
@@ -350,15 +350,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Leader is far, add movement task
         if (_tasks.Count == 0)
         {
-            _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance.Value));
+            _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
         }
         else
         {
             // Update last task if leader moved significantly
             var lastTask = _tasks.Last();
-            if (Vector3.Distance(lastTask.WorldPosition, _followTarget.Pos) > Settings.PathfindingNodeDistance.Value)
+            if (Vector3.Distance(lastTask.WorldPosition, _followTarget.Pos) > Settings.Movement.PathfindingNodeDistance.Value)
             {
-                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.PathfindingNodeDistance.Value));
+                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
             }
         }
         
@@ -415,7 +415,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
         
         // Much more conservative timing to prevent kicks
-        var baseDelay = Math.Max(Settings.BotInputFrequency.Value, 250); // Minimum 250ms
+        var baseDelay = Math.Max(Settings.Movement.BotInputFrequency.Value, 250); // Minimum 250ms
         var randomDelay = _random.Next(100, 300); // Always add random delay
         
         // If leader is not visible (out of range), use very slow timing
@@ -428,12 +428,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // If leader is visible but far away, use slow timing
             var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-            if (leaderDistance > Settings.NormalFollowDistance.Value * 2)
+            if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
             {
                 baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
                 randomDelay = _random.Next(150, 350);
             }
-            else if (leaderDistance > Settings.NormalFollowDistance.Value)
+            else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
             {
                 baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
                 randomDelay = _random.Next(100, 250);
@@ -469,7 +469,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // Track attempts and remove if too many
             currentTask.AttemptCount++;
-            if (currentTask.AttemptCount > Settings.MaxTaskAttempts.Value)
+            if (currentTask.AttemptCount > Settings.Safety.MaxTaskAttempts.Value)
             {
                 _tasks.RemoveAt(0);
             }
@@ -481,8 +481,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var screenPos = WorldToScreenPosition(task.WorldPosition);
         Mouse.SetCursorPos(screenPos);
         
-        Input.KeyDown(Settings.MovementKey);
-        Input.KeyUp(Settings.MovementKey);
+        Input.KeyDown(Settings.Movement.MovementKey);
+        Input.KeyUp(Settings.Movement.MovementKey);
     }
     
     private void ExecuteTransitionTask(TaskNode task, float distance)
@@ -499,8 +499,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // Move towards transition
             Mouse.SetCursorPos(screenPos);
-            Input.KeyDown(Settings.MovementKey);
-            Input.KeyUp(Settings.MovementKey);
+            Input.KeyDown(Settings.Movement.MovementKey);
+            Input.KeyUp(Settings.Movement.MovementKey);
         }
     }
     
@@ -508,7 +508,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     {
         var screenPos = WorldToScreenPosition(task.WorldPosition);
         
-        if (distance <= Settings.WaypointDistance.Value)
+        if (distance <= Settings.Movement.WaypointDistance.Value)
         {
             // Close enough to click waypoint
             Mouse.SetCursorPosAndLeftClick(screenPos, 100);
@@ -518,8 +518,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // Move towards waypoint
             Mouse.SetCursorPos(screenPos);
-            Input.KeyDown(Settings.MovementKey);
-            Input.KeyUp(Settings.MovementKey);
+            Input.KeyDown(Settings.Movement.MovementKey);
+            Input.KeyUp(Settings.Movement.MovementKey);
         }
     }
 
@@ -701,7 +701,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             // Show timing mode
             yPos += 20;
-            var timingMode = distance > Settings.NormalFollowDistance.Value * 2 ? "SLOW (Far)" : "NORMAL";
+            var timingMode = distance > Settings.Movement.NormalFollowDistance.Value * 2 ? "SLOW (Far)" : "NORMAL";
             Graphics.DrawText($"Timing Mode: {timingMode}", new Vector2(10, yPos), SharpDX.Color.Cyan);
         }
         else
@@ -739,7 +739,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             Graphics.DrawText("LEVELING GEMS", new Vector2(10, yPos), SharpDX.Color.Cyan);
         }
-        else if (Settings.AutoLevelGems.Value && HasGemsToLevel())
+        else if (Settings.Gems.AutoLevelGems.Value && HasGemsToLevel())
         {
             Graphics.DrawText("GEMS AVAILABLE", new Vector2(10, yPos), SharpDX.Color.Green);
         }

@@ -10,129 +10,264 @@ public class FollowerSettings : ISettings
     // Core Settings (Always visible at top)
     public ToggleNode Enable { get; set; } = new ToggleNode(false);
     public ToggleNode IsFollowEnabled { get; set; } = new ToggleNode(false);
+    public HotkeyNode ToggleFollower { get; set; } = Keys.PageUp;
+    public TextNode LeaderName { get; set; } = new TextNode("");
     
-    // Core Settings Section - Collapsible
-    [Menu("Core Settings")]
-    public EmptyNode CoreSettingsHeader { get; set; } = new EmptyNode();
+    // Submenu Settings Groups
+    public MovementSettings Movement { get; set; } = new();
+    public DashSettings Dash { get; set; } = new();
+    public SafetySettings Safety { get; set; } = new();
+    public UIAvoidanceSettings UIAvoidance { get; set; } = new();
+    public LeaderSettings Leader { get; set; } = new();
+    public DeathSettings Death { get; set; } = new();
+    public InventorySettings Inventory { get; set; } = new();
+    public GemSettings Gems { get; set; } = new();
+    public PluginSettings Plugins { get; set; } = new();
+    public PerformanceSettings Performance { get; set; } = new();
+    public DebugSettings Debug { get; set; } = new();
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class MovementSettings
+{
+    [Menu("Movement Key", "Key used for movement commands")]
+    public HotkeyNode MovementKey { get; set; } = Keys.T;
     
-    [Menu("Core Settings", "Toggle Follower")] public HotkeyNode ToggleFollower { get; set; } = Keys.PageUp;
-    [Menu("Core Settings", "Follow Target Name")] public TextNode LeaderName { get; set; } = new TextNode("");
+    [Menu("Follow Close", "Follow closely behind the leader")]
+    public ToggleNode IsCloseFollowEnabled { get; set; } = new ToggleNode(false);
     
-    // Movement & Pathfinding Section - Collapsible
-    [Menu("Movement & Pathfinding")]
-    public EmptyNode MovementHeader { get; set; } = new EmptyNode();
+    [Menu("Min Path Distance", "Minimum distance to start pathfinding")]
+    public RangeNode<int> PathfindingNodeDistance { get; set; } = new RangeNode<int>(200, 10, 1000);
     
-    [Menu("Movement & Pathfinding", "Movement Key")] public HotkeyNode MovementKey { get; set; } = Keys.T;
-    [Menu("Movement & Pathfinding", "Follow Close")] public ToggleNode IsCloseFollowEnabled { get; set; } = new ToggleNode(false);
-    [Menu("Movement & Pathfinding", "Min Path Distance")] public RangeNode<int> PathfindingNodeDistance { get; set; } = new RangeNode<int>(200, 10, 1000);
-    [Menu("Movement & Pathfinding", "Move CMD Frequency")] public RangeNode<int> BotInputFrequency { get; set; } = new RangeNode<int>(50, 10, 250);
-    [Menu("Movement & Pathfinding", "Stop Path Distance")] public RangeNode<int> ClearPathDistance { get; set; } = new RangeNode<int>(500, 100, 5000);
-    [Menu("Movement & Pathfinding", "Transition Distance")] public RangeNode<int> TransitionDistance { get; set; } = new RangeNode<int>(200, 50, 1000);
-    [Menu("Movement & Pathfinding", "Waypoint Distance")] public RangeNode<int> WaypointDistance { get; set; } = new RangeNode<int>(150, 50, 500);
-    [Menu("Movement & Pathfinding", "Max Task Attempts")] public RangeNode<int> MaxTaskAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
-    [Menu("Movement & Pathfinding", "Normal Follow Distance")] public RangeNode<int> NormalFollowDistance { get; set; } = new RangeNode<int>(1500, 500, 3000);
-    [Menu("Movement & Pathfinding", "Random Click Offset")] public RangeNode<int> RandomClickOffset { get; set; } = new RangeNode<int>(10, 1, 100);
+    [Menu("Move CMD Frequency", "How often to send movement commands (ms)")]
+    public RangeNode<int> BotInputFrequency { get; set; } = new RangeNode<int>(50, 10, 250);
     
-    // Dash & Movement Enhancement Section - Collapsible
-    [Menu("Dash & Movement")]
-    public EmptyNode DashHeader { get; set; } = new EmptyNode();
+    [Menu("Stop Path Distance", "Distance to stop current path")]
+    public RangeNode<int> ClearPathDistance { get; set; } = new RangeNode<int>(500, 100, 5000);
     
-    [Menu("Dash & Movement", "Allow Dash")] public ToggleNode IsDashEnabled { get; set; } = new ToggleNode(false);
-    [Menu("Dash & Movement", "Dash Key")] public HotkeyNode DashKey { get; set; } = Keys.W;
-    [Menu("Dash & Movement", "Dash Distance Threshold")] public RangeNode<int> DashDistanceThreshold { get; set; } = new RangeNode<int>(800, 200, 2000);
-    [Menu("Dash & Movement", "Dash Cooldown (ms)")] public RangeNode<int> DashCooldown { get; set; } = new RangeNode<int>(500, 100, 2000);
-    [Menu("Dash & Movement", "Mouse Movement Area (% from center)")] public RangeNode<int> MouseMovementAreaPercent { get; set; } = new RangeNode<int>(65, 30, 90);
+    [Menu("Transition Distance", "Distance threshold for area transitions")]
+    public RangeNode<int> TransitionDistance { get; set; } = new RangeNode<int>(200, 50, 1000);
     
-    // Safety & Detection Section - Collapsible
-    [Menu("Safety & Detection")]
-    public EmptyNode SafetyHeader { get; set; } = new EmptyNode();
+    [Menu("Waypoint Distance", "Distance to claim waypoints")]
+    public RangeNode<int> WaypointDistance { get; set; } = new RangeNode<int>(150, 50, 500);
     
-    [Menu("Safety & Detection", "Enable Stuck Detection")] public ToggleNode EnableStuckDetection { get; set; } = new ToggleNode(false);
-    [Menu("Safety & Detection", "Stuck Detection Time (ms)")] public RangeNode<int> StuckDetectionTime { get; set; } = new RangeNode<int>(3000, 1000, 10000);
-    [Menu("Safety & Detection", "Stuck Movement Threshold")] public RangeNode<int> StuckMovementThreshold { get; set; } = new RangeNode<int>(50, 10, 200);
-    [Menu("Safety & Detection", "Max Stuck Recovery Attempts")] public RangeNode<int> MaxStuckRecoveryAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
-    [Menu("Safety & Detection", "Pause on Logout Screen")] public ToggleNode PauseOnLogout { get; set; } = new ToggleNode(true);
-    [Menu("Safety & Detection", "Pause on Character Select")] public ToggleNode PauseOnCharacterSelect { get; set; } = new ToggleNode(true);
+    [Menu("Leader Max Distance", "Maximum distance from leader before stopping")]
+    public RangeNode<int> LeaderMaxDistance { get; set; } = new RangeNode<int>(1000, 100, 3000);
     
-    // UI Avoidance Section - Collapsible
-    [Menu("UI Avoidance")]
-    public EmptyNode UIHeader { get; set; } = new EmptyNode();
+    [Menu("Normal Follow Distance", "Standard follow distance for timing calculations")]
+    public RangeNode<int> NormalFollowDistance { get; set; } = new RangeNode<int>(1500, 500, 3000);
     
-    [Menu("UI Avoidance", "Enable Smart UI Avoidance")] public ToggleNode EnableSmartUIAvoidance { get; set; } = new ToggleNode(true);
-    [Menu("UI Avoidance", "UI Avoidance Distance")] public RangeNode<int> UIAvoidanceDistance { get; set; } = new RangeNode<int>(100, 20, 200);
-    [Menu("UI Avoidance", "Mouse Random Offset")] public RangeNode<int> MouseRandomOffset { get; set; } = new RangeNode<int>(8, 2, 20);
-    [Menu("UI Avoidance", "Show UI Debug Rectangles")] public ToggleNode ShowUIDebugRectangles { get; set; } = new ToggleNode(false);
-    [Menu("UI Avoidance", "Exclude Top Edge")] public ToggleNode ExcludeTopEdge { get; set; } = new ToggleNode(true);
-    [Menu("UI Avoidance", "Top Edge Exclusion Height")] public RangeNode<int> TopEdgeExclusionHeight { get; set; } = new RangeNode<int>(50, 20, 150);
-    [Menu("UI Avoidance", "Exclude Bottom Edge")] public ToggleNode ExcludeBottomEdge { get; set; } = new ToggleNode(true);
-    [Menu("UI Avoidance", "Bottom Edge Exclusion Height")] public RangeNode<int> BottomEdgeExclusionHeight { get; set; } = new RangeNode<int>(80, 20, 200);
+    [Menu("Min Action Distance", "Minimum distance to perform any action")]
+    public RangeNode<int> MinActionDistance { get; set; } = new RangeNode<int>(20, 5, 100);
     
-    // Leader Management Section - Collapsible
-    [Menu("Leader Management")]
-    public EmptyNode LeaderHeader { get; set; } = new EmptyNode();
+    [Menu("Max Action Distance", "Maximum distance to perform any action")]
+    public RangeNode<int> MaxActionDistance { get; set; } = new RangeNode<int>(800, 200, 2000);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class DashSettings
+{
+    [Menu("Auto Dash", "Automatically use dash skills")]
+    public ToggleNode AutoDash { get; set; } = new ToggleNode(false);
     
-    [Menu("Leader Management", "Enable Multiple Leaders")] public ToggleNode EnableMultipleLeaders { get; set; } = new ToggleNode(false);
-    [Menu("Leader Management", "Leader Names (comma separated)")] public TextNode LeaderNames { get; set; } = new TextNode("");
-    [Menu("Leader Management", "Leader Switch Distance")] public RangeNode<int> LeaderSwitchDistance { get; set; } = new RangeNode<int>(2000, 500, 5000);
-    [Menu("Leader Management", "Prioritize Closest Leader")] public ToggleNode PrioritizeClosestLeader { get; set; } = new ToggleNode(true);
-    [Menu("Leader Management", "Teleport Detection Distance")] public RangeNode<int> TeleportDetectionDistance { get; set; } = new RangeNode<int>(4000, 2000, 10000);
-    [Menu("Leader Management", "Search Last Position")] public ToggleNode SearchLastPosition { get; set; } = new ToggleNode(true);
+    [Menu("Dash Key", "Key for dash skill")]
+    public HotkeyNode DashKey { get; set; } = Keys.Q;
     
-    // Death & Recovery Section - Collapsible
-    [Menu("Death & Recovery")]
-    public EmptyNode DeathHeader { get; set; } = new EmptyNode();
+    [Menu("Dash Distance", "Distance threshold to use dash")]
+    public RangeNode<int> DashDistance { get; set; } = new RangeNode<int>(400, 100, 1000);
     
-    [Menu("Death & Recovery", "Enable Death Handling")] public ToggleNode EnableDeathHandling { get; set; } = new ToggleNode(false);
-    [Menu("Death & Recovery", "Auto Resume After Death")] public ToggleNode AutoResumeAfterDeath { get; set; } = new ToggleNode(true);
-    [Menu("Death & Recovery", "Death Detection Check Interval (ms)")] public RangeNode<int> DeathCheckInterval { get; set; } = new RangeNode<int>(1000, 500, 5000);
-    [Menu("Death & Recovery", "Resurrection Wait Timeout (ms)")] public RangeNode<int> ResurrectionTimeout { get; set; } = new RangeNode<int>(30000, 10000, 120000);
+    [Menu("Dash Cooldown", "Cooldown between dash uses (ms)")]
+    public RangeNode<int> DashCooldown { get; set; } = new RangeNode<int>(3000, 1000, 10000);
     
-    // Inventory Management Section - Collapsible
-    [Menu("Inventory Management")]
-    public EmptyNode InventoryHeader { get; set; } = new EmptyNode();
+    [Menu("Dash in Combat", "Allow dash when enemies are nearby")]
+    public ToggleNode DashInCombat { get; set; } = new ToggleNode(false);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class SafetySettings
+{
+    [Menu("Enable Stuck Detection", "Detect when follower is stuck")]
+    public ToggleNode EnableStuckDetection { get; set; } = new ToggleNode(true);
     
-    [Menu("Inventory Management", "Enable Inventory Management")] public ToggleNode EnableInventoryManagement { get; set; } = new ToggleNode(false);
-    [Menu("Inventory Management", "Auto Portal on Full Inventory")] public ToggleNode AutoPortalOnFullInventory { get; set; } = new ToggleNode(true);
-    [Menu("Inventory Management", "Inventory Full Threshold")] public RangeNode<int> InventoryFullThreshold { get; set; } = new RangeNode<int>(55, 40, 60);
-    [Menu("Inventory Management", "Portal Wait Time (ms)")] public RangeNode<int> PortalWaitTime { get; set; } = new RangeNode<int>(5000, 2000, 15000);
-    [Menu("Inventory Management", "Enable Portal Avoidance")] public ToggleNode EnablePortalAvoidance { get; set; } = new ToggleNode(true);
-    [Menu("Inventory Management", "Portal Avoidance Distance")] public RangeNode<int> PortalAvoidanceDistance { get; set; } = new RangeNode<int>(300, 150, 800);
+    [Menu("Stuck Distance Threshold", "Distance threshold for stuck detection")]
+    public RangeNode<int> StuckDistanceThreshold { get; set; } = new RangeNode<int>(10, 5, 50);
     
-    // Gem Management Section - Collapsible
-    [Menu("Gem Management")]
-    public EmptyNode GemHeader { get; set; } = new EmptyNode();
+    [Menu("Stuck Time Threshold", "Time threshold for stuck detection (ms)")]
+    public RangeNode<int> StuckTimeThreshold { get; set; } = new RangeNode<int>(5000, 1000, 15000);
     
-    [Menu("Gem Management", "Auto Level Gems")] public ToggleNode AutoLevelGems { get; set; } = new ToggleNode(true);
-    [Menu("Gem Management", "Level Gems When Close")] public ToggleNode LevelGemsWhenClose { get; set; } = new ToggleNode(true);
-    [Menu("Gem Management", "Level Gems When Stopped")] public ToggleNode LevelGemsWhenStopped { get; set; } = new ToggleNode(true);
-    [Menu("Gem Management", "Gem Level Check Interval (ms)")] public RangeNode<int> GemLevelCheckInterval { get; set; } = new RangeNode<int>(2000, 500, 10000);
+    [Menu("Random Movement Range", "Range for random movement when stuck")]
+    public RangeNode<int> RandomMovementRange { get; set; } = new RangeNode<int>(50, 20, 200);
     
-    // Plugin Integration Section - Collapsible
-    [Menu("Plugin Integration")]
-    public EmptyNode PluginHeader { get; set; } = new EmptyNode();
+    [Menu("Max Stuck Recovery Attempts", "Maximum attempts to recover from stuck")]
+    public RangeNode<int> MaxStuckRecoveryAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
     
-    [Menu("Plugin Integration", "Yield to PickItV2")] public ToggleNode YieldToPickItV2 { get; set; } = new ToggleNode(false);
-    [Menu("Plugin Integration", "PickItV2 Yield Timeout (ms)")] public RangeNode<int> PickItV2YieldTimeout { get; set; } = new RangeNode<int>(5000, 1000, 15000);
-    [Menu("Plugin Integration", "Yield to ReAgent")] public ToggleNode YieldToReAgent { get; set; } = new ToggleNode(false);
-    [Menu("Plugin Integration", "ReAgent Yield Timeout (ms)")] public RangeNode<int> ReAgentYieldTimeout { get; set; } = new RangeNode<int>(2000, 500, 5000);
+    [Menu("Max Task Attempts", "Maximum attempts per task before giving up")]
+    public RangeNode<int> MaxTaskAttempts { get; set; } = new RangeNode<int>(3, 1, 10);
     
-    // Performance & Timing Section - Collapsible
-    [Menu("Performance & Timing")]
-    public EmptyNode PerformanceHeader { get; set; } = new EmptyNode();
+    [Menu("Pause on Logout Screen", "Pause when logout screen is visible")]
+    public ToggleNode PauseOnLogout { get; set; } = new ToggleNode(true);
     
-    [Menu("Performance & Timing", "Max Pathfinding Iterations")] public RangeNode<int> MaxPathfindingIterations { get; set; } = new RangeNode<int>(500, 100, 2000);
-    [Menu("Performance & Timing", "Terrain Refresh Rate (ms)")] public RangeNode<int> TerrainRefreshRate { get; set; } = new RangeNode<int>(1000, 500, 5000);
-    [Menu("Performance & Timing", "Path Update Frequency (ms)")] public RangeNode<int> PathUpdateFrequency { get; set; } = new RangeNode<int>(250, 100, 1000);
-    [Menu("Performance & Timing", "Enable Performance Monitoring")] public ToggleNode EnablePerformanceMonitoring { get; set; } = new ToggleNode(false);
-    [Menu("Performance & Timing", "Log Level")] public RangeNode<int> LogLevel { get; set; } = new RangeNode<int>(1, 0, 4); // 0=Debug, 1=Info, 2=Warning, 3=Error, 4=Critical
+    [Menu("Pause on Character Select", "Pause when character select is visible")]
+    public ToggleNode PauseOnCharacterSelect { get; set; } = new ToggleNode(true);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class UIAvoidanceSettings
+{
+    [Menu("Enable Smart UI Avoidance", "Avoid clicking on UI elements")]
+    public ToggleNode EnableSmartUIAvoidance { get; set; } = new ToggleNode(true);
     
-    // Debug & Visualization Section - Collapsible
-    [Menu("Debug & Visualization")]
-    public EmptyNode DebugHeader { get; set; } = new EmptyNode();
+    [Menu("UI Avoidance Distance", "Distance to avoid UI elements")]
+    public RangeNode<int> UIAvoidanceDistance { get; set; } = new RangeNode<int>(100, 20, 200);
     
-    [Menu("Debug & Visualization", "Show Path Debug")] public ToggleNode ShowPathStatusDebug { get; set; } = new ToggleNode(false);
-    [Menu("Debug & Visualization", "Show Task Debug")] public ToggleNode ShowTaskDebug { get; set; } = new ToggleNode(false);
-    [Menu("Debug & Visualization", "Show Terrain Visualization")] public ToggleNode ShowTerrainVisualization { get; set; } = new ToggleNode(false);
-    [Menu("Debug & Visualization", "Show Entity Debug")] public ToggleNode ShowEntityDebug { get; set; } = new ToggleNode(false);
-    [Menu("Debug & Visualization", "Show Debug Paths")] public ToggleNode ShowDebugPaths { get; set; } = new ToggleNode(false);
+    [Menu("Mouse Random Offset", "Random offset for mouse clicks")]
+    public RangeNode<int> MouseRandomOffset { get; set; } = new RangeNode<int>(8, 2, 20);
+    
+    [Menu("Show UI Debug Rectangles", "Display UI element rectangles")]
+    public ToggleNode ShowUIDebugRectangles { get; set; } = new ToggleNode(false);
+    
+    [Menu("Exclude Top Edge", "Exclude clicks near top edge")]
+    public ToggleNode ExcludeTopEdge { get; set; } = new ToggleNode(true);
+    
+    [Menu("Top Edge Exclusion Height", "Height of top edge exclusion")]
+    public RangeNode<int> TopEdgeExclusionHeight { get; set; } = new RangeNode<int>(50, 20, 150);
+    
+    [Menu("Exclude Bottom Edge", "Exclude clicks near bottom edge")]
+    public ToggleNode ExcludeBottomEdge { get; set; } = new ToggleNode(true);
+    
+    [Menu("Bottom Edge Exclusion Height", "Height of bottom edge exclusion")]
+    public RangeNode<int> BottomEdgeExclusionHeight { get; set; } = new RangeNode<int>(80, 20, 200);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class LeaderSettings
+{
+    [Menu("Enable Multiple Leaders", "Support following multiple leaders")]
+    public ToggleNode EnableMultipleLeaders { get; set; } = new ToggleNode(false);
+    
+    [Menu("Leader Prioritization", "How to prioritize multiple leaders")]
+    public ListNode LeaderPrioritization { get; set; } = new ListNode { Values = new System.Collections.Generic.List<string> { "Closest", "First Found", "Alphabetical" }, Value = "Closest" };
+    
+    [Menu("Leader Switch Threshold", "Distance threshold to switch leaders")]
+    public RangeNode<int> LeaderSwitchThreshold { get; set; } = new RangeNode<int>(300, 100, 1000);
+    
+    [Menu("Leader Timeout", "Time before considering leader lost (ms)")]
+    public RangeNode<int> LeaderTimeout { get; set; } = new RangeNode<int>(15000, 5000, 60000);
+    
+    [Menu("Leader Search Range", "Range to search for leader")]
+    public RangeNode<int> LeaderSearchRange { get; set; } = new RangeNode<int>(2000, 500, 5000);
+    
+    [Menu("Auto Resume Following", "Automatically resume following when leader returns")]
+    public ToggleNode AutoResumeFollowing { get; set; } = new ToggleNode(true);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class DeathSettings
+{
+    [Menu("Enable Death Handling", "Handle player death events")]
+    public ToggleNode EnableDeathHandling { get; set; } = new ToggleNode(true);
+    
+    [Menu("Pause on Death", "Pause following when player dies")]
+    public ToggleNode PauseOnDeath { get; set; } = new ToggleNode(true);
+    
+    [Menu("Auto Resume After Resurrect", "Resume following after resurrection")]
+    public ToggleNode AutoResumeAfterResurrect { get; set; } = new ToggleNode(true);
+    
+    [Menu("Death Detection Delay", "Delay before detecting death (ms)")]
+    public RangeNode<int> DeathDetectionDelay { get; set; } = new RangeNode<int>(1000, 500, 5000);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class InventorySettings
+{
+    [Menu("Enable Inventory Management", "Manage inventory during following")]
+    public ToggleNode EnableInventoryManagement { get; set; } = new ToggleNode(false);
+    
+    [Menu("Auto Return to Town", "Return to town when inventory is full")]
+    public ToggleNode AutoReturnToTown { get; set; } = new ToggleNode(false);
+    
+    [Menu("Use Portal for Town", "Use portal instead of waypoint")]
+    public ToggleNode UsePortalForTown { get; set; } = new ToggleNode(true);
+    
+    [Menu("Inventory Full Threshold", "Inventory slots threshold for full")]
+    public RangeNode<int> InventoryFullThreshold { get; set; } = new RangeNode<int>(55, 40, 60);
+    
+    [Menu("Portal Wait Time", "Time to wait for portal (ms)")]
+    public RangeNode<int> PortalWaitTime { get; set; } = new RangeNode<int>(5000, 2000, 15000);
+    
+    [Menu("Enable Portal Avoidance", "Avoid standing on portals")]
+    public ToggleNode EnablePortalAvoidance { get; set; } = new ToggleNode(true);
+    
+    [Menu("Portal Avoidance Distance", "Distance to avoid portals")]
+    public RangeNode<int> PortalAvoidanceDistance { get; set; } = new RangeNode<int>(300, 150, 800);
+}
+
+[Submenu(CollapsedByDefault = false)]
+public class GemSettings
+{
+    [Menu("Auto Level Gems", "Automatically level skill gems")]
+    public ToggleNode AutoLevelGems { get; set; } = new ToggleNode(true);
+    
+    [Menu("Level Gems When Close", "Level gems when close to leader")]
+    public ToggleNode LevelGemsWhenClose { get; set; } = new ToggleNode(true);
+    
+    [Menu("Level Gems When Stopped", "Level gems when not moving")]
+    public ToggleNode LevelGemsWhenStopped { get; set; } = new ToggleNode(true);
+    
+    [Menu("Gem Level Check Interval", "How often to check for gem levels (ms)")]
+    public RangeNode<int> GemLevelCheckInterval { get; set; } = new RangeNode<int>(2000, 500, 10000);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class PluginSettings
+{
+    [Menu("Yield to PickItV2", "Pause when PickItV2 is active")]
+    public ToggleNode YieldToPickItV2 { get; set; } = new ToggleNode(false);
+    
+    [Menu("PickItV2 Yield Timeout", "Timeout for PickItV2 yield (ms)")]
+    public RangeNode<int> PickItV2YieldTimeout { get; set; } = new RangeNode<int>(5000, 1000, 15000);
+    
+    [Menu("Yield to ReAgent", "Pause when ReAgent is active")]
+    public ToggleNode YieldToReAgent { get; set; } = new ToggleNode(false);
+    
+    [Menu("ReAgent Yield Timeout", "Timeout for ReAgent yield (ms)")]
+    public RangeNode<int> ReAgentYieldTimeout { get; set; } = new RangeNode<int>(2000, 500, 5000);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class PerformanceSettings
+{
+    [Menu("Max Pathfinding Iterations", "Maximum iterations for pathfinding")]
+    public RangeNode<int> MaxPathfindingIterations { get; set; } = new RangeNode<int>(500, 100, 2000);
+    
+    [Menu("Terrain Refresh Rate", "How often to refresh terrain (ms)")]
+    public RangeNode<int> TerrainRefreshRate { get; set; } = new RangeNode<int>(1000, 500, 5000);
+    
+    [Menu("Path Update Frequency", "How often to update path (ms)")]
+    public RangeNode<int> PathUpdateFrequency { get; set; } = new RangeNode<int>(250, 100, 1000);
+    
+    [Menu("Enable Performance Monitoring", "Monitor performance metrics")]
+    public ToggleNode EnablePerformanceMonitoring { get; set; } = new ToggleNode(false);
+    
+    [Menu("Log Level", "Logging level (0=Debug, 1=Info, 2=Warning, 3=Error, 4=Critical)")]
+    public RangeNode<int> LogLevel { get; set; } = new RangeNode<int>(1, 0, 4);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class DebugSettings
+{
+    [Menu("Show Path Debug", "Display path debugging information")]
+    public ToggleNode ShowPathStatusDebug { get; set; } = new ToggleNode(false);
+    
+    [Menu("Show Task Debug", "Display task debugging information")]
+    public ToggleNode ShowTaskDebug { get; set; } = new ToggleNode(false);
+    
+    [Menu("Show Terrain Visualization", "Display terrain visualization")]
+    public ToggleNode ShowTerrainVisualization { get; set; } = new ToggleNode(false);
+    
+    [Menu("Show Entity Debug", "Display entity debugging information")]
+    public ToggleNode ShowEntityDebug { get; set; } = new ToggleNode(false);
+    
+    [Menu("Show Debug Paths", "Display debug paths")]
+    public ToggleNode ShowDebugPaths { get; set; } = new ToggleNode(false);
 }
