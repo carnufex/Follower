@@ -21,6 +21,10 @@ namespace Follower
         private DateTime _nextBotAction = DateTime.Now;
         private Random _random = new Random();
         
+        // Action tracking to prevent kicks
+        private Queue<DateTime> _recentActions = new Queue<DateTime>();
+        private const int MAX_ACTIONS_PER_SECOND = 2; // Very conservative limit
+        
         // Terrain data
         private byte[,] _tiles;
         private int _numCols, _numRows;
@@ -186,32 +190,75 @@ namespace Follower
             _lastTargetPosition = _followTarget.Pos;
         }
         
+        /// <summary>
+        /// Check if we're performing too many actions too quickly
+        /// </summary>
+        private bool IsActionRateLimited()
+        {
+            var now = DateTime.Now;
+            var oneSecondAgo = now.AddSeconds(-1);
+            
+            // Remove actions older than 1 second
+            while (_recentActions.Count > 0 && _recentActions.Peek() < oneSecondAgo)
+            {
+                _recentActions.Dequeue();
+            }
+            
+            // Check if we've exceeded the rate limit
+            if (_recentActions.Count >= MAX_ACTIONS_PER_SECOND)
+            {
+                return true;
+            }
+            
+            return false;
+        }
+        
+        /// <summary>
+        /// Record that we performed an action
+        /// </summary>
+        private void RecordAction()
+        {
+            _recentActions.Enqueue(DateTime.Now);
+        }
+        
         private void ExecuteTasks()
         {
             if (_tasks.Count == 0)
                 return;
+                
+            // Check if we're rate limited
+            if (IsActionRateLimited())
+            {
+                _nextBotAction = DateTime.Now.AddMilliseconds(1000 + _random.Next(200, 500)); // Wait at least 1 second
+                return;
+            }
             
             var currentTask = _tasks.First();
             var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
             
-            // Adaptive timing based on leader visibility and distance
-            var baseDelay = Settings.BotInputFrequency.Value;
-            var randomDelay = _random.Next(0, Settings.BotInputFrequency.Value);
+            // Much more conservative timing to prevent kicks
+            var baseDelay = Math.Max(Settings.BotInputFrequency.Value, 250); // Minimum 250ms
+            var randomDelay = _random.Next(100, 300); // Always add random delay
             
-            // If leader is not visible (out of range), use much slower timing to prevent kicks
+            // If leader is not visible (out of range), use very slow timing
             if (_followTarget == null)
             {
-                baseDelay = Math.Max(baseDelay * 3, 500); // At least 3x slower when leader not visible
-                randomDelay = _random.Next(100, 300); // Additional random delay
+                baseDelay = Math.Max(baseDelay * 5, 1000); // At least 5x slower, minimum 1 second
+                randomDelay = _random.Next(200, 500); // Large random delay
             }
             else
             {
-                // If leader is visible but far away, use moderately slower timing
+                // If leader is visible but far away, use slow timing
                 var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
                 if (leaderDistance > Settings.NormalFollowDistance.Value * 2)
                 {
-                    baseDelay = Math.Max(baseDelay * 2, 300); // 2x slower when leader is far
-                    randomDelay = _random.Next(50, 150);
+                    baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
+                    randomDelay = _random.Next(150, 350);
+                }
+                else if (leaderDistance > Settings.NormalFollowDistance.Value)
+                {
+                    baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
+                    randomDelay = _random.Next(100, 250);
                 }
             }
             
@@ -221,10 +268,12 @@ namespace Follower
             {
                 case TaskNode.TaskNodeType.Movement:
                     ExecuteMovementTask(currentTask, taskDistance);
+                    RecordAction();
                     break;
                     
                 case TaskNode.TaskNodeType.Transition:
                     ExecuteTransitionTask(currentTask, taskDistance);
+                    RecordAction();
                     break;
             }
             
@@ -440,15 +489,43 @@ namespace Follower
             if (_followTarget != null)
             {
                 var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-                Graphics.DrawText($"Following: {Settings.LeaderName.Value} (Distance: {distance:F1})", new Vector2(10, yPos), SharpDX.Color.Green);
+                var color = distance > 100 ? SharpDX.Color.Yellow : SharpDX.Color.Green;
+                Graphics.DrawText($"Following: {Settings.LeaderName.Value} (Distance: {distance:F1})", new Vector2(10, yPos), color);
+                
+                // Show timing mode
+                yPos += 20;
+                var timingMode = distance > Settings.NormalFollowDistance.Value * 2 ? "SLOW (Far)" : "NORMAL";
+                Graphics.DrawText($"Timing Mode: {timingMode}", new Vector2(10, yPos), SharpDX.Color.Cyan);
             }
             else
             {
                 Graphics.DrawText($"Leader not found: {Settings.LeaderName.Value}", new Vector2(10, yPos), SharpDX.Color.Red);
+                yPos += 20;
+                Graphics.DrawText("Timing Mode: VERY SLOW (No Leader)", new Vector2(10, yPos), SharpDX.Color.Orange);
             }
             yPos += 20;
             
             Graphics.DrawText($"Tasks: {_tasks.Count}", new Vector2(10, yPos), SharpDX.Color.White);
+            yPos += 20;
+            
+            // Show next action time
+            var nextActionDelay = (_nextBotAction - DateTime.Now).TotalMilliseconds;
+            if (nextActionDelay > 0)
+            {
+                Graphics.DrawText($"Next Action: {nextActionDelay:F0}ms", new Vector2(10, yPos), SharpDX.Color.Gray);
+                yPos += 20;
+            }
+            
+            // Show rate limiting status
+            if (IsActionRateLimited())
+            {
+                Graphics.DrawText("RATE LIMITED - Slowing down", new Vector2(10, yPos), SharpDX.Color.Red);
+                yPos += 20;
+            }
+            
+            // Show recent actions count
+            Graphics.DrawText($"Actions/sec: {_recentActions.Count}/{MAX_ACTIONS_PER_SECOND}", new Vector2(10, yPos), SharpDX.Color.Gray);
+            yPos += 20;
             
             // Draw task path
             if (_tasks.Count > 1)
