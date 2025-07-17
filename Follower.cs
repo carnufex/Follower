@@ -489,7 +489,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     {
         var screenPos = WorldToScreenPosition(task.WorldPosition);
         
-        if (distance <= Settings.ClearPathDistance.Value)
+        if (distance <= Settings.Movement.ClearPathDistance.Value)
         {
             // Close enough to click
             Mouse.SetCursorPosAndLeftClick(screenPos, 100);
