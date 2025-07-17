@@ -281,7 +281,20 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var playerPos = GameController.Player.Pos;
         
         // Calculate a position that's slightly behind the leader
-        var direction = (playerPos - leaderPos).Normalized();
+        var direction = playerPos - leaderPos;
+        var length = direction.Length();
+        
+        // Normalize the direction vector manually
+        if (length > 0)
+        {
+            direction = direction / length;
+        }
+        else
+        {
+            // If positions are the same, use a default safe direction
+            direction = new Vector3(0, 1, 0);
+        }
+        
         var safeDistance = GetSmartFollowDistance(Vector3.Distance(playerPos, leaderPos));
         
         // Position slightly behind and to the side for safety
