@@ -15,6 +15,7 @@ public class FollowerSettings : ISettings
     
     // Submenu Settings Groups
     public MovementSettings Movement { get; set; } = new();
+    public PathfindingSettings Pathfinding { get; set; } = new();
     public DashSettings Dash { get; set; } = new();
     public SafetySettings Safety { get; set; } = new();
     public UIAvoidanceSettings UIAvoidance { get; set; } = new();
@@ -62,6 +63,31 @@ public class MovementSettings
     
     [Menu("Max Action Distance", "Maximum distance to perform any action")]
     public RangeNode<int> MaxActionDistance { get; set; } = new RangeNode<int>(800, 200, 2000);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class PathfindingSettings
+{
+    [Menu("Enable Advanced Pathfinding", "Use A* pathfinding instead of direct movement")]
+    public ToggleNode EnableAdvancedPathfinding { get; set; } = new ToggleNode(true);
+    
+    [Menu("Enable Predictive Following", "Predict where leader is going and follow ahead")]
+    public ToggleNode EnablePredictiveFollowing { get; set; } = new ToggleNode(true);
+    
+    [Menu("Prediction Distance", "How far ahead to predict leader movement")]
+    public RangeNode<int> PredictionDistance { get; set; } = new RangeNode<int>(200, 50, 500);
+    
+    [Menu("Path Recalculation Threshold", "Grid distance before recalculating path")]
+    public RangeNode<int> PathRecalculationThreshold { get; set; } = new RangeNode<int>(5, 1, 20);
+    
+    [Menu("Max Waypoints Per Update", "Maximum waypoints to add to task queue")]
+    public RangeNode<int> MaxWaypointsPerUpdate { get; set; } = new RangeNode<int>(3, 1, 10);
+    
+    [Menu("Direction Field Cache Duration", "How long to cache direction fields (seconds)")]
+    public RangeNode<int> DirectionFieldCacheDuration { get; set; } = new RangeNode<int>(300, 30, 1800);
+    
+    [Menu("Pathfinding Timeout", "Maximum time to spend on pathfinding (ms)")]
+    public RangeNode<int> PathfindingTimeout { get; set; } = new RangeNode<int>(100, 10, 1000);
 }
 
 [Submenu(CollapsedByDefault = true)]

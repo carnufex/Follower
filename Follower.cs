@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace Follower;
 
@@ -20,6 +21,16 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private List<TaskNode> _tasks = new List<TaskNode>();
     private DateTime _nextBotAction = DateTime.Now;
     private Random _random = new Random();
+    
+    // Advanced pathfinding system
+    private PathFinder _pathFinder;
+    private bool _pathFinderInitialized = false;
+    private Dictionary<Vector2i, DateTime> _directionFieldCache = new Dictionary<Vector2i, DateTime>();
+    private CancellationTokenSource _pathfindingCancellation = new CancellationTokenSource();
+    private Vector2i _lastLeaderGridPosition = new Vector2i(-1, -1);
+    private DateTime _lastPathfindingUpdate = DateTime.MinValue;
+    private List<Vector2i> _currentPath = new List<Vector2i>();
+    private int _currentPathIndex = 0;
     
     // Action tracking to prevent kicks
     private Queue<DateTime> _recentActions = new Queue<DateTime>();
@@ -67,6 +78,67 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         };
         
         return base.Initialise();
+    }
+
+    public override void AreaChange(AreaInstance area)
+    {
+        // Cancel any ongoing pathfinding
+        _pathfindingCancellation.Cancel();
+        _pathfindingCancellation = new CancellationTokenSource();
+        
+        // Reset pathfinding state
+        _pathFinderInitialized = false;
+        _pathFinder = null;
+        _directionFieldCache.Clear();
+        _currentPath.Clear();
+        _currentPathIndex = 0;
+        _lastLeaderGridPosition = new Vector2i(-1, -1);
+        
+        // Reset stuck detection
+        _isStuck = false;
+        _alternativeWaypoints.Clear();
+        _usingAlternativeRoute = false;
+        
+        // Clear tasks
+        _tasks.Clear();
+        
+        // Initialize pathfinder for new area
+        InitializePathFinder();
+        
+        base.AreaChange(area);
+    }
+
+    private void InitializePathFinder()
+    {
+        try
+        {
+            // Get terrain data from game
+            _tiles = GameController.IngameState.Data.RawTerrainData;
+            
+            if (_tiles != null)
+            {
+                _numRows = _tiles.GetLength(0);
+                _numCols = _tiles.GetLength(1);
+                
+                // Initialize pathfinder with terrain data
+                _pathFinder = new PathFinder(_tiles, new[] { 1, 2, 3, 4, 5 });
+                _pathFinderInitialized = true;
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage($"PathFinder initialized for area: {_numRows}x{_numCols}", 3);
+                }
+            }
+            else
+            {
+                LogMessage("Failed to get terrain data for pathfinding", 1);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error initializing pathfinder: {ex.Message}", 1);
+            _pathFinderInitialized = false;
+        }
     }
     
     public override Job Tick()
@@ -450,11 +522,24 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
-    /// Simple check if a position is likely to be pathable
+    /// Advanced check if a position is pathable using the pathfinder
     /// </summary>
     private bool IsPositionLikelyPathable(Vector3 position)
     {
-        // Basic bounds checking
+        // Use pathfinder if available
+        if (_pathFinderInitialized && _pathFinder != null)
+        {
+            var gridPos = PathFinder.WorldToGrid(position);
+            
+            // Check bounds
+            if (gridPos.X < 0 || gridPos.X >= _numCols || gridPos.Y < 0 || gridPos.Y >= _numRows)
+                return false;
+            
+            // Use pathfinder's terrain evaluation
+            return _tiles[gridPos.Y, gridPos.X] > 0 && _tiles[gridPos.Y, gridPos.X] < 100;
+        }
+        
+        // Fall back to basic checking
         if (position.X < 0 || position.Y < 0)
             return false;
         
@@ -513,16 +598,55 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
     
     /// <summary>
-    /// Gets the smart follow position based on leader state
+    /// Gets the smart follow position based on leader state with predictive pathfinding
     /// </summary>
     private Vector3 GetSmartFollowPosition()
     {
         if (_followTarget == null)
             return Vector3.Zero;
         
-        // For now, use current position (Phase 1 - no pathfinding prediction)
-        // In future phases, this could use pathfinding data
-        return _followTarget.Pos;
+        // Phase 4: Implement predictive pathfinding
+        var currentLeaderPos = _followTarget.Pos;
+        
+        // If predictive following is enabled and we have a path history
+        if (Settings.Pathfinding.EnablePredictiveFollowing.Value && _pathFinderInitialized && _lastTargetPosition != Vector3.Zero)
+        {
+            var leaderMovement = currentLeaderPos - _lastTargetPosition;
+            var movementDistance = leaderMovement.Length();
+            
+            // If leader is moving significantly, predict next position
+            if (movementDistance > 50f) // Minimum movement threshold
+            {
+                var predictedDistance = Math.Min(movementDistance * 2f, Settings.Pathfinding.PredictionDistance.Value); // Predict ahead but cap it
+                var predictedPosition = currentLeaderPos + Vector3.Normalize(leaderMovement) * predictedDistance;
+                
+                // Validate predicted position is pathable
+                if (_pathFinder != null)
+                {
+                    var predictedGrid = PathFinder.WorldToGrid(predictedPosition);
+                    var currentGrid = PathFinder.WorldToGrid(currentLeaderPos);
+                    
+                    // Check if predicted position is within reasonable bounds and pathable
+                    if (predictedGrid.X >= 0 && predictedGrid.X < _numCols && 
+                        predictedGrid.Y >= 0 && predictedGrid.Y < _numRows)
+                    {
+                        // Test if we can path to the predicted position
+                        var testPath = _pathFinder.FindPath(currentGrid, predictedGrid);
+                        if (testPath != null && testPath.Count > 0)
+                        {
+                            if (Settings.Debug.EnableActionStateLogging.Value)
+                            {
+                                LogMessage($"Predictive pathfinding: Using predicted position {predictedDistance:F1} units ahead", 3);
+                            }
+                            return predictedPosition;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Fall back to current position if prediction fails
+        return currentLeaderPos;
     }
     
 
@@ -676,7 +800,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
 
     /// <summary>
-    /// Plans tasks based on leader position and current state with course correction
+    /// Plans movement tasks based on current state using advanced pathfinding
     /// </summary>
     private void PlanTasks()
     {
@@ -696,15 +820,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             // Leader not found, try to use last known position for area transition
             if (_lastTargetPosition != Vector3.Zero && _tasks.Count == 0)
             {
-                            var nearbyTransition = _areaTransitions.Values
-                .Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.Movement.ClearPathDistance.Value)
-                .OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
-                .FirstOrDefault();
-            
-            if (nearbyTransition != null)
-            {
-                _tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.Movement.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
-            }
+                var nearbyTransition = _areaTransitions.Values
+                    .Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.Movement.ClearPathDistance.Value)
+                    .OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
+                    .FirstOrDefault();
+                
+                if (nearbyTransition != null)
+                {
+                    _tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.Movement.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
+                }
             }
             return;
         }
@@ -721,24 +845,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (Settings.Movement.IsCloseFollowEnabled.Value && distance > followDistance && shouldFollow)
             {
                 var targetPosition = GetSmartFollowPosition();
-                
-                // Use course correction if we've been stuck recently
-                if (_isStuck && _alternativeWaypoints.Count > 0)
-                {
-                    var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
-                    if (alternativeTarget != Vector3.Zero)
-                    {
-                        _tasks.Add(new TaskNode(alternativeTarget, followDistance));
-                    }
-                    else
-                    {
-                        _tasks.Add(new TaskNode(targetPosition, followDistance));
-                    }
-                }
-                else
-                {
-                    _tasks.Add(new TaskNode(targetPosition, followDistance));
-                }
+                PlanPathfindingTasks(targetPosition, followDistance);
             }
             
             // Check for waypoint claiming (only when not in combat)
@@ -761,57 +868,160 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Leader is far - decide whether to follow based on current state
         if (shouldFollow)
         {
-            if (_tasks.Count == 0)
+            var targetPosition = GetSmartFollowPosition();
+            
+            // Check if we need to recalculate path
+            if (ShouldRecalculatePath(targetPosition))
             {
-                var targetPosition = GetSmartFollowPosition();
-                
-                // Use course correction if we're stuck
-                if (_isStuck && _alternativeWaypoints.Count > 0)
-                {
-                    var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
-                    if (alternativeTarget != Vector3.Zero)
-                    {
-                        _tasks.Add(new TaskNode(alternativeTarget, followDistance));
-                    }
-                    else
-                    {
-                        _tasks.Add(new TaskNode(targetPosition, followDistance));
-                    }
-                }
-                else
-                {
-                    _tasks.Add(new TaskNode(targetPosition, followDistance));
-                }
+                PlanPathfindingTasks(targetPosition, followDistance);
             }
-            else
+            else if (_tasks.Count == 0)
             {
-                // Update last task if leader moved significantly
-                var lastTask = _tasks.Last();
-                var targetPosition = GetSmartFollowPosition();
-                if (Vector3.Distance(lastTask.WorldPosition, targetPosition) > followDistance)
-                {
-                    // Use course correction if we're stuck
-                    if (_isStuck && _alternativeWaypoints.Count > 0)
-                    {
-                        var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
-                        if (alternativeTarget != Vector3.Zero)
-                        {
-                            _tasks.Add(new TaskNode(alternativeTarget, followDistance));
-                        }
-                        else
-                        {
-                            _tasks.Add(new TaskNode(targetPosition, followDistance));
-                        }
-                    }
-                    else
-                    {
-                        _tasks.Add(new TaskNode(targetPosition, followDistance));
-                    }
-                }
+                // No current path, create one
+                PlanPathfindingTasks(targetPosition, followDistance);
             }
         }
         
         _lastTargetPosition = _followTarget.Pos;
+    }
+
+    /// <summary>
+    /// Plans tasks using advanced pathfinding instead of simple movement
+    /// </summary>
+    private void PlanPathfindingTasks(Vector3 targetPosition, float followDistance)
+    {
+        // Check if advanced pathfinding is enabled
+        if (!Settings.Pathfinding.EnableAdvancedPathfinding.Value || !_pathFinderInitialized)
+        {
+            // Fall back to simple movement if pathfinder disabled or not ready
+            _tasks.Add(new TaskNode(targetPosition, (int)followDistance));
+            return;
+        }
+
+        try
+        {
+            var playerGridPos = PathFinder.WorldToGrid(GameController.Player.Pos);
+            var targetGridPos = PathFinder.WorldToGrid(targetPosition);
+            
+            // Skip pathfinding if target is too close
+            if (playerGridPos.Distance(targetGridPos) < 2)
+            {
+                _tasks.Add(new TaskNode(targetPosition, (int)followDistance));
+                return;
+            }
+            
+            // Use existing path if we have one and it's still valid
+            if (_currentPath.Count > 0 && _currentPathIndex < _currentPath.Count)
+            {
+                var remainingPath = _currentPath.Skip(_currentPathIndex).ToList();
+                AddPathToTasks(remainingPath, followDistance);
+                return;
+            }
+            
+            // Calculate new path with timeout
+            var pathfindingTask = Task.Run(() => _pathFinder.FindPath(playerGridPos, targetGridPos));
+            var timeoutTask = Task.Delay(Settings.Pathfinding.PathfindingTimeout.Value);
+            
+            var completedTask = Task.WaitAny(pathfindingTask, timeoutTask);
+            
+            List<Vector2i> path = null;
+            if (completedTask == 0 && pathfindingTask.IsCompletedSuccessfully)
+            {
+                path = pathfindingTask.Result;
+            }
+            
+            if (path != null && path.Count > 0)
+            {
+                _currentPath = path;
+                _currentPathIndex = 0;
+                AddPathToTasks(path, followDistance);
+                
+                // Pre-calculate direction field for leader position (Phase 3)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _pathFinder.PreCalculateDirectionFieldAsync(targetGridPos, _pathfindingCancellation.Token);
+                        _directionFieldCache[targetGridPos] = DateTime.Now;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when area changes
+                    }
+                    catch (Exception ex)
+                    {
+                        if (Settings.Debug.EnableActionStateLogging.Value)
+                        {
+                            LogMessage($"Error pre-calculating direction field: {ex.Message}", 2);
+                        }
+                    }
+                });
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage($"Pathfinding: Found path with {path.Count} waypoints", 3);
+                }
+            }
+            else
+            {
+                // No path found or timeout, fall back to simple movement
+                _tasks.Add(new TaskNode(targetPosition, (int)followDistance));
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage($"Pathfinding: No path found or timeout, using direct movement", 2);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"Error in pathfinding: {ex.Message}", 1);
+            // Fall back to simple movement
+            _tasks.Add(new TaskNode(targetPosition, (int)followDistance));
+        }
+    }
+
+    /// <summary>
+    /// Adds pathfinding waypoints to the task list
+    /// </summary>
+    private void AddPathToTasks(List<Vector2i> path, float followDistance)
+    {
+        // Add waypoints as tasks, but don't add too many at once
+        var waypointsToAdd = Math.Min(path.Count, Settings.Pathfinding.MaxWaypointsPerUpdate.Value);
+        
+        for (int i = 0; i < waypointsToAdd; i++)
+        {
+            var worldPos = PathFinder.GridToWorld(path[i]);
+            var nodeDistance = i == waypointsToAdd - 1 ? (int)followDistance : Settings.Movement.PathfindingNodeDistance.Value;
+            _tasks.Add(new TaskNode(worldPos, nodeDistance));
+        }
+    }
+
+    /// <summary>
+    /// Determines if we should recalculate the path
+    /// </summary>
+    private bool ShouldRecalculatePath(Vector3 targetPosition)
+    {
+        if (!_pathFinderInitialized || _currentPath.Count == 0)
+            return true;
+        
+        var currentTargetGrid = PathFinder.WorldToGrid(targetPosition);
+        
+        // Recalculate if leader moved significantly
+        if (currentTargetGrid.Distance(_lastLeaderGridPosition) > Settings.Pathfinding.PathRecalculationThreshold.Value)
+        {
+            _lastLeaderGridPosition = currentTargetGrid;
+            return true;
+        }
+        
+        // Recalculate if we've been following the same path for too long
+        if (DateTime.Now - _lastPathfindingUpdate > TimeSpan.FromSeconds(5))
+        {
+            _lastPathfindingUpdate = DateTime.Now;
+            return true;
+        }
+        
+        return false;
     }
     
     /// <summary>
@@ -968,6 +1178,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         if (taskDistance <= currentTask.Bounds)
         {
             _tasks.RemoveAt(0);
+            
+            // Update pathfinding index if we're following a calculated path
+            if (_currentPath.Count > 0 && _currentPathIndex < _currentPath.Count)
+            {
+                _currentPathIndex++;
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage($"Pathfinding: Completed waypoint {_currentPathIndex}/{_currentPath.Count}", 3);
+                }
+            }
         }
         else
         {
@@ -976,6 +1197,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (currentTask.AttemptCount > Settings.Safety.MaxTaskAttempts.Value)
             {
                 _tasks.RemoveAt(0);
+                
+                // Also increment pathfinding index to skip problematic waypoint
+                if (_currentPath.Count > 0 && _currentPathIndex < _currentPath.Count)
+                {
+                    _currentPathIndex++;
+                    
+                    if (Settings.Debug.EnableActionStateLogging.Value)
+                    {
+                        LogMessage($"Pathfinding: Skipping problematic waypoint {_currentPathIndex}/{_currentPath.Count}", 2);
+                    }
+                }
             }
         }
     }
