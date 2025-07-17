@@ -91,13 +91,40 @@ namespace Follower
                     .Where(x => x.Type == EntityType.Player)
                     .FirstOrDefault(x => x.GetComponent<Player>()?.PlayerName?.ToLower() == leaderName);
                 
-                if (visibleTarget != null)
+                if (visibleTarget != null && visibleTarget.IsValid)
                     return visibleTarget;
                 
                 // If not visible, try EntityListWrapper which includes off-screen entities
-                return GameController.EntityListWrapper.Entities
+                var offscreenTarget = GameController.EntityListWrapper.Entities
                     .Where(x => x.Type == EntityType.Player)
                     .FirstOrDefault(x => x.IsValid && x.GetComponent<Player>()?.PlayerName?.ToLower() == leaderName);
+                
+                if (offscreenTarget != null && offscreenTarget.IsValid)
+                    return offscreenTarget;
+                
+                // Third attempt: try all entities in the area (more expensive but comprehensive)
+                var allEntities = GameController.EntityListWrapper.Entities
+                    .Where(x => x.Type == EntityType.Player && x.IsValid)
+                    .ToList();
+                
+                foreach (var entity in allEntities)
+                {
+                    try
+                    {
+                        var playerComponent = entity.GetComponent<Player>();
+                        if (playerComponent?.PlayerName?.ToLower() == leaderName)
+                        {
+                            return entity;
+                        }
+                    }
+                    catch
+                    {
+                        // Skip invalid entities
+                        continue;
+                    }
+                }
+                
+                return null;
             }
             catch
             {
@@ -167,7 +194,28 @@ namespace Follower
             var currentTask = _tasks.First();
             var taskDistance = Vector3.Distance(GameController.Player.Pos, currentTask.WorldPosition);
             
-            _nextBotAction = DateTime.Now.AddMilliseconds(Settings.BotInputFrequency.Value + _random.Next(0, Settings.BotInputFrequency.Value));
+            // Adaptive timing based on leader visibility and distance
+            var baseDelay = Settings.BotInputFrequency.Value;
+            var randomDelay = _random.Next(0, Settings.BotInputFrequency.Value);
+            
+            // If leader is not visible (out of range), use much slower timing to prevent kicks
+            if (_followTarget == null)
+            {
+                baseDelay = Math.Max(baseDelay * 3, 500); // At least 3x slower when leader not visible
+                randomDelay = _random.Next(100, 300); // Additional random delay
+            }
+            else
+            {
+                // If leader is visible but far away, use moderately slower timing
+                var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+                if (leaderDistance > Settings.NormalFollowDistance.Value * 2)
+                {
+                    baseDelay = Math.Max(baseDelay * 2, 300); // 2x slower when leader is far
+                    randomDelay = _random.Next(50, 150);
+                }
+            }
+            
+            _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
             
             switch (currentTask.Type)
             {
@@ -180,18 +228,19 @@ namespace Follower
                     break;
             }
             
-                    // Remove completed tasks
-        if (taskDistance <= currentTask.Bounds)
-        {
-            _tasks.RemoveAt(0);
-        }
-        else
-        {
-            // Track attempts and remove if too many
-            currentTask.AttemptCount++;
-            if (currentTask.AttemptCount > Settings.MaxTaskAttempts.Value)
+            // Remove completed tasks
+            if (taskDistance <= currentTask.Bounds)
             {
                 _tasks.RemoveAt(0);
+            }
+            else
+            {
+                // Track attempts and remove if too many
+                currentTask.AttemptCount++;
+                if (currentTask.AttemptCount > Settings.MaxTaskAttempts.Value)
+                {
+                    _tasks.RemoveAt(0);
+                }
             }
         }
         }
@@ -230,13 +279,82 @@ namespace Follower
             var windowRect = GameController.Window.GetWindowRectangle();
             var screenPos = camera.WorldToScreen(worldPos);
             
-            // Constrain to window
+            // More conservative UI avoidance - larger margins
+            var safeMargin = 100; // Increased from 50
             var result = new Vector2(
-                Math.Max(50, Math.Min(windowRect.Width - 50, screenPos.X + windowRect.X)),
-                Math.Max(50, Math.Min(windowRect.Height - 50, screenPos.Y + windowRect.Y))
+                Math.Max(safeMargin, Math.Min(windowRect.Width - safeMargin, screenPos.X + windowRect.X)),
+                Math.Max(safeMargin, Math.Min(windowRect.Height - safeMargin, screenPos.Y + windowRect.Y))
             );
             
+            // Additional UI panel avoidance
+            if (IsUIBlocking(result))
+            {
+                // If UI is blocking, try to find a safe position
+                result = FindSafeScreenPosition(result, windowRect);
+            }
+            
             return result;
+        }
+        
+        private bool IsUIBlocking(Vector2 screenPos)
+        {
+            try
+            {
+                var ingameUI = GameController.IngameState.IngameUi;
+                if (ingameUI == null) return false;
+                
+                var screenRect = new RectangleF(screenPos.X - 50, screenPos.Y - 50, 100, 100);
+                
+                // Check common UI panels that might block movement
+                if (ingameUI.InventoryPanel?.IsVisible == true && 
+                    ingameUI.InventoryPanel.GetClientRect().Intersects(screenRect))
+                    return true;
+                    
+                if (ingameUI.StashElement?.IsVisible == true && 
+                    ingameUI.StashElement.GetClientRect().Intersects(screenRect))
+                    return true;
+                    
+                if (ingameUI.TreePanel?.IsVisible == true && 
+                    ingameUI.TreePanel.GetClientRect().Intersects(screenRect))
+                    return true;
+                    
+                if (ingameUI.Atlas?.IsVisible == true && 
+                    ingameUI.Atlas.GetClientRect().Intersects(screenRect))
+                    return true;
+                    
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
+        private Vector2 FindSafeScreenPosition(Vector2 originalPos, RectangleF windowRect)
+        {
+            // Try positions in a spiral pattern around the original position
+            var attempts = new[]
+            {
+                new Vector2(originalPos.X - 100, originalPos.Y),
+                new Vector2(originalPos.X + 100, originalPos.Y),
+                new Vector2(originalPos.X, originalPos.Y - 100),
+                new Vector2(originalPos.X, originalPos.Y + 100),
+                new Vector2(originalPos.X - 150, originalPos.Y - 150),
+                new Vector2(originalPos.X + 150, originalPos.Y + 150),
+            };
+            
+            foreach (var attempt in attempts)
+            {
+                if (attempt.X >= 100 && attempt.X <= windowRect.Width - 100 &&
+                    attempt.Y >= 100 && attempt.Y <= windowRect.Height - 100 &&
+                    !IsUIBlocking(attempt))
+                {
+                    return attempt;
+                }
+            }
+            
+            // Fallback to center of screen
+            return new Vector2(windowRect.Width / 2, windowRect.Height / 2);
         }
         
         public override void AreaChange(AreaInstance area)
