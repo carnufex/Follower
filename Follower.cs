@@ -393,12 +393,14 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var directionToLeader = leaderPos - stuckPosition;
         var distance = directionToLeader.Length();
         
+        // Base distance for alternative waypoints
+        var baseDistance = Settings.Safety.RandomMovementRange.Value;
+        
         if (distance > 0)
         {
             directionToLeader = directionToLeader / distance;
             
             // Generate waypoints in a semi-circle around the stuck position
-            var baseDistance = Settings.Safety.RandomMovementRange.Value;
             var angles = new float[] { -45f, -22.5f, 0f, 22.5f, 45f };
             
             foreach (var angle in angles)
