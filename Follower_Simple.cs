@@ -243,7 +243,6 @@ namespace Follower
                 }
             }
         }
-        }
         
         private void ExecuteMovementTask(TaskNode task, float distance)
         {
@@ -463,4 +462,4 @@ namespace Follower
             }
         }
     }
-} 
+}
