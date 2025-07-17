@@ -256,18 +256,18 @@ public class PerformanceSettings
 [Submenu(CollapsedByDefault = true)]
 public class DebugSettings
 {
-    [Menu("Show Path Debug", "Display path debugging information")]
-    public ToggleNode ShowPathStatusDebug { get; set; } = new ToggleNode(false);
+    [Menu("Enable Debug Mode", "Show detailed debug information")]
+    public ToggleNode EnableDebugMode { get; set; } = new ToggleNode(false);
     
-    [Menu("Show Task Debug", "Display task debugging information")]
-    public ToggleNode ShowTaskDebug { get; set; } = new ToggleNode(false);
+    [Menu("Enable Action State Logging", "Log leader action state changes")]
+    public ToggleNode EnableActionStateLogging { get; set; } = new ToggleNode(false);
     
-    [Menu("Show Terrain Visualization", "Display terrain visualization")]
-    public ToggleNode ShowTerrainVisualization { get; set; } = new ToggleNode(false);
+    [Menu("Debug Display Position", "Y position for debug display")]
+    public RangeNode<int> DebugDisplayPosition { get; set; } = new RangeNode<int>(200, 100, 800);
     
-    [Menu("Show Entity Debug", "Display entity debugging information")]
-    public ToggleNode ShowEntityDebug { get; set; } = new ToggleNode(false);
+    [Menu("Log Performance Metrics", "Log timing and performance data")]
+    public ToggleNode LogPerformanceMetrics { get; set; } = new ToggleNode(false);
     
-    [Menu("Show Debug Paths", "Display debug paths")]
-    public ToggleNode ShowDebugPaths { get; set; } = new ToggleNode(false);
+    [Menu("Show Task Details", "Display detailed task information")]
+    public ToggleNode ShowTaskDetails { get; set; } = new ToggleNode(false);
 }

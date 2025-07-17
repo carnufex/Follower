@@ -25,6 +25,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private Queue<DateTime> _recentActions = new Queue<DateTime>();
     private const int MAX_ACTIONS_PER_SECOND = 2; // Very conservative limit
     
+    // Leader action state tracking (Phase 1)
+    private ActionFlags _leaderActionState = ActionFlags.None;
+    private DateTime _lastActionStateUpdate = DateTime.MinValue;
+    private bool _combatModeActive = false;
+    private DateTime _lastCombatStateChange = DateTime.MinValue;
+    
     // Terrain data
     private byte[,] _tiles;
     private int _numCols, _numRows;
@@ -72,6 +78,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             // Get follow target
             _followTarget = GetFollowTarget();
+            
+            // Update leader action state (Phase 1)
+            UpdateLeaderActionState();
             
             // Check for gem leveling
             CheckAndLevelGems();
@@ -145,6 +154,142 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
     }
     
+    /// <summary>
+    /// Updates the leader's action state for smarter following behavior
+    /// </summary>
+    private void UpdateLeaderActionState()
+    {
+        if (_followTarget == null)
+        {
+            _leaderActionState = ActionFlags.None;
+            _combatModeActive = false;
+            return;
+        }
+
+        try
+        {
+            // Get the leader's current action state
+            if (_followTarget.TryGetComponent<Actor>(out var actorComp))
+            {
+                var currentActionState = actorComp.Action;
+                var previousActionState = _leaderActionState;
+                _leaderActionState = currentActionState;
+                
+                var now = DateTime.Now;
+                
+                // Determine if leader is in combat based on action flags
+                var isInCombat = IsLeaderInCombat(currentActionState);
+                
+                // Update combat mode with state change tracking
+                if (isInCombat != _combatModeActive)
+                {
+                    _combatModeActive = isInCombat;
+                    _lastCombatStateChange = now;
+                    
+                    // Log combat state changes for debugging
+                    if (Settings.Debug.EnableActionStateLogging.Value)
+                    {
+                        LogMessage($"Leader combat state changed: {(isInCombat ? "COMBAT" : "PEACEFUL")}", 3);
+                    }
+                }
+                
+                _lastActionStateUpdate = now;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"UpdateLeaderActionState error: {ex.Message}", 1);
+            // Fallback to safe defaults
+            _leaderActionState = ActionFlags.None;
+            _combatModeActive = false;
+        }
+    }
+    
+    /// <summary>
+    /// Determines if the leader is in combat based on action flags
+    /// </summary>
+    private bool IsLeaderInCombat(ActionFlags actionFlags)
+    {
+        // Check for combat-related action flags
+        return (actionFlags & ActionFlags.UsingAbility) != 0 ||
+               (actionFlags & ActionFlags.HasMines) != 0 ||
+               (actionFlags & ActionFlags.Dead) != 0 ||
+               actionFlags.ToString().Contains("Attack") ||
+               actionFlags.ToString().Contains("Cast") ||
+               actionFlags.ToString().Contains("Skill");
+    }
+    
+    /// <summary>
+    /// Gets the optimal follow distance based on combat state
+    /// </summary>
+    private int GetSmartFollowDistance(float currentDistance)
+    {
+        if (_combatModeActive)
+        {
+            // In combat, maintain a larger distance for safety
+            return Math.Max(Settings.Movement.PathfindingNodeDistance.Value * 2, 400);
+        }
+        
+        // Normal following distance
+        return Settings.Movement.PathfindingNodeDistance.Value;
+    }
+    
+    /// <summary>
+    /// Determines if the follower should follow in the current state
+    /// </summary>
+    private bool ShouldFollowInCurrentState(float currentDistance)
+    {
+        // Always follow if leader is very far away
+        if (currentDistance > Settings.Movement.LeaderMaxDistance.Value)
+            return true;
+        
+        // In combat mode, be more conservative about following
+        if (_combatModeActive)
+        {
+            // Only follow if leader is quite far away or has been in combat for a while
+            var combatDuration = DateTime.Now - _lastCombatStateChange;
+            return currentDistance > Settings.Movement.NormalFollowDistance.Value || 
+                   combatDuration > TimeSpan.FromSeconds(5);
+        }
+        
+        // Normal following behavior
+        return currentDistance > Settings.Movement.PathfindingNodeDistance.Value;
+    }
+    
+    /// <summary>
+    /// Gets the smart follow position based on leader state
+    /// </summary>
+    private Vector3 GetSmartFollowPosition()
+    {
+        if (_followTarget == null)
+            return Vector3.Zero;
+        
+        // For now, use current position (Phase 1 - no pathfinding prediction)
+        // In future phases, this could use pathfinding data
+        return _followTarget.Pos;
+    }
+    
+    /// <summary>
+    /// Gets a safe position to follow during combat
+    /// </summary>
+    private Vector3 GetSafeFollowPosition()
+    {
+        if (_followTarget == null)
+            return GameController.Player.Pos;
+        
+        var leaderPos = _followTarget.Pos;
+        var playerPos = GameController.Player.Pos;
+        
+        // Calculate a position that's slightly behind the leader
+        var direction = (playerPos - leaderPos).Normalized();
+        var safeDistance = GetSmartFollowDistance(Vector3.Distance(playerPos, leaderPos));
+        
+        // Position slightly behind and to the side for safety
+        var safePosition = leaderPos + direction * safeDistance;
+        
+        return safePosition;
+    }
+
     /// <summary>
     /// Checks for gems that need leveling and triggers the leveling process
     /// </summary>
@@ -322,16 +467,27 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
         
-        // If leader is close, don't add tasks unless close follow is enabled
+        // Combat mode awareness: Adjust following behavior based on leader's state
+        var followDistance = GetSmartFollowDistance(distance);
+        var shouldFollow = ShouldFollowInCurrentState(distance);
+        
+        // If leader is close, don't add tasks unless close follow is enabled or we need to maintain distance
         if (distance < Settings.Movement.ClearPathDistance.Value)
         {
-            if (Settings.Movement.IsCloseFollowEnabled.Value && distance > Settings.Movement.PathfindingNodeDistance.Value)
+            // In combat mode, maintain a safer distance
+            if (_combatModeActive && distance < followDistance)
+            {
+                // Move to a safer position during combat
+                var safePosition = GetSafeFollowPosition();
+                _tasks.Add(new TaskNode(safePosition, followDistance, TaskNode.TaskNodeType.Movement));
+            }
+            else if (Settings.Movement.IsCloseFollowEnabled.Value && distance > Settings.Movement.PathfindingNodeDistance.Value && shouldFollow)
             {
                 _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
             }
             
-            // Check for waypoint claiming
-            if (!_hasUsedWP)
+            // Check for waypoint claiming (only when not in combat)
+            if (!_hasUsedWP && !_combatModeActive)
             {
                 var waypoint = GameController.EntityListWrapper.Entities.FirstOrDefault(e => 
                     e.Type == EntityType.Waypoint && 
@@ -347,24 +503,29 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             return;
         }
         
-        // Leader is far, add movement task
-        if (_tasks.Count == 0)
+        // Leader is far - decide whether to follow based on current state
+        if (shouldFollow)
         {
-            _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
-        }
-        else
-        {
-            // Update last task if leader moved significantly
-            var lastTask = _tasks.Last();
-            if (Vector3.Distance(lastTask.WorldPosition, _followTarget.Pos) > Settings.Movement.PathfindingNodeDistance.Value)
+            if (_tasks.Count == 0)
             {
-                _tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+                var targetPosition = GetSmartFollowPosition();
+                _tasks.Add(new TaskNode(targetPosition, followDistance));
+            }
+            else
+            {
+                // Update last task if leader moved significantly
+                var lastTask = _tasks.Last();
+                var targetPosition = GetSmartFollowPosition();
+                if (Vector3.Distance(lastTask.WorldPosition, targetPosition) > followDistance)
+                {
+                    _tasks.Add(new TaskNode(targetPosition, followDistance));
+                }
             }
         }
         
         _lastTargetPosition = _followTarget.Pos;
     }
-
+    
     /// <summary>
     /// Check if we're performing too many actions too quickly
     /// </summary>
@@ -417,6 +578,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Much more conservative timing to prevent kicks
         var baseDelay = Math.Max(Settings.Movement.BotInputFrequency.Value, 250); // Minimum 250ms
         var randomDelay = _random.Next(100, 300); // Always add random delay
+        
+        // Combat mode awareness: Use extra conservative timing during combat
+        if (_combatModeActive)
+        {
+            baseDelay = Math.Max(baseDelay * 2, 500); // Double delay during combat, minimum 500ms
+            randomDelay = _random.Next(200, 400); // Larger random delay during combat
+        }
         
         // If leader is not visible (out of range), use very slow timing
         if (_followTarget == null)
@@ -699,14 +867,26 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             var color = distance > 100 ? SharpDX.Color.Yellow : SharpDX.Color.Green;
             Graphics.DrawText($"Following: {Settings.LeaderName.Value} (Distance: {distance:F1})", new Vector2(10, yPos), color);
             
+            // Show combat mode status
+            yPos += 20;
+            var combatColor = _combatModeActive ? SharpDX.Color.Red : SharpDX.Color.Green;
+            Graphics.DrawText($"Combat Mode: {(_combatModeActive ? "ACTIVE" : "INACTIVE")}", new Vector2(10, yPos), combatColor);
+            
+            // Show action state details
+            yPos += 20;
+            Graphics.DrawText($"Action State: {_leaderActionState}", new Vector2(10, yPos), SharpDX.Color.Cyan);
+            
             // Show timing mode
             yPos += 20;
-            var timingMode = distance > Settings.Movement.NormalFollowDistance.Value * 2 ? "SLOW (Far)" : "NORMAL";
+            var timingMode = _combatModeActive ? "COMBAT (Extra Slow)" : 
+                           distance > Settings.Movement.NormalFollowDistance.Value * 2 ? "SLOW (Far)" : "NORMAL";
             Graphics.DrawText($"Timing Mode: {timingMode}", new Vector2(10, yPos), SharpDX.Color.Cyan);
         }
         else
         {
             Graphics.DrawText($"Leader not found: {Settings.LeaderName.Value}", new Vector2(10, yPos), SharpDX.Color.Red);
+            yPos += 20;
+            Graphics.DrawText("Combat Mode: N/A", new Vector2(10, yPos), SharpDX.Color.Gray);
             yPos += 20;
             Graphics.DrawText("Timing Mode: VERY SLOW (No Leader)", new Vector2(10, yPos), SharpDX.Color.Orange);
         }
