@@ -1111,6 +1111,78 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         return new Vector2(windowRect.Width / 2, windowRect.Height / 2);
     }
 
+    /// <summary>
+    /// Draws debug rectangles around UI elements for debugging UI avoidance
+    /// </summary>
+    private void DrawUIDebugRectangles()
+    {
+        try
+        {
+            var ingameUI = GameController.IngameState.IngameUi;
+            if (ingameUI == null) return;
+
+            var windowRect = GameController.Window.GetWindowRectangle();
+            
+            // Draw rectangles for common UI panels
+            DrawUIElementRectangle(ingameUI.InventoryPanel, "Inventory", SharpDX.Color.Red);
+            DrawUIElementRectangle(ingameUI.StashElement, "Stash", SharpDX.Color.Orange);
+            DrawUIElementRectangle(ingameUI.TreePanel, "Tree", SharpDX.Color.Yellow);
+            DrawUIElementRectangle(ingameUI.Atlas, "Atlas", SharpDX.Color.Green);
+            DrawUIElementRectangle(ingameUI.WorldMap, "World Map", SharpDX.Color.Blue);
+            DrawUIElementRectangle(ingameUI.OpenLeftPanel, "Left Panel", SharpDX.Color.Purple);
+            DrawUIElementRectangle(ingameUI.OpenRightPanel, "Right Panel", SharpDX.Color.Cyan);
+            DrawUIElementRectangle(ingameUI.GuildPanel, "Guild", SharpDX.Color.Pink);
+            DrawUIElementRectangle(ingameUI.ChallengePanel, "Challenge", SharpDX.Color.Brown);
+            
+            // Draw edge exclusion zones
+            if (Settings.UIAvoidance.ExcludeTopEdge.Value)
+            {
+                var topRect = new RectangleF(0, 0, windowRect.Width, Settings.UIAvoidance.TopEdgeExclusionHeight.Value);
+                Graphics.DrawFrame(topRect, SharpDX.Color.Red, 2);
+                Graphics.DrawText("TOP EXCLUSION ZONE", new Vector2(10, 10), SharpDX.Color.Red);
+            }
+            
+            if (Settings.UIAvoidance.ExcludeBottomEdge.Value)
+            {
+                var bottomRect = new RectangleF(0, windowRect.Height - Settings.UIAvoidance.BottomEdgeExclusionHeight.Value, 
+                    windowRect.Width, Settings.UIAvoidance.BottomEdgeExclusionHeight.Value);
+                Graphics.DrawFrame(bottomRect, SharpDX.Color.Red, 2);
+                Graphics.DrawText("BOTTOM EXCLUSION ZONE", new Vector2(10, windowRect.Height - 30), SharpDX.Color.Red);
+            }
+            
+            // Draw safe margins
+            var safeMargin = 100; // Same as used in WorldToScreenPosition
+            var safeRect = new RectangleF(safeMargin, safeMargin, 
+                windowRect.Width - (safeMargin * 2), windowRect.Height - (safeMargin * 2));
+            Graphics.DrawFrame(safeRect, SharpDX.Color.Green, 1);
+            Graphics.DrawText("SAFE AREA", new Vector2(safeMargin + 10, safeMargin + 10), SharpDX.Color.Green);
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"DrawUIDebugRectangles error: {ex.Message}", 1);
+        }
+    }
+    
+    /// <summary>
+    /// Draws a debug rectangle for a specific UI element
+    /// </summary>
+    private void DrawUIElementRectangle(Element element, string name, SharpDX.Color color)
+    {
+        try
+        {
+            if (element?.IsVisible == true)
+            {
+                var rect = element.GetClientRect();
+                Graphics.DrawFrame(rect, color, 2);
+                Graphics.DrawText($"{name} UI", new Vector2(rect.X + 5, rect.Y + 5), color);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogMessage($"DrawUIElementRectangle error for {name}: {ex.Message}", 1);
+        }
+    }
+
     public override void AreaChange(AreaInstance area)
     {
         // Reset state for new area
@@ -1293,6 +1365,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 var end = WorldToScreenPosition(_tasks[i].WorldPosition);
                 Graphics.DrawLine(start, end, 2, SharpDX.Color.Pink);
             }
+        }
+        
+        // Draw UI debug rectangles if enabled
+        if (Settings.UIAvoidance.ShowUIDebugRectangles.Value)
+        {
+            DrawUIDebugRectangles();
         }
     }
 }
