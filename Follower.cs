@@ -31,6 +31,18 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private bool _combatModeActive = false;
     private DateTime _lastCombatStateChange = DateTime.MinValue;
     
+    // Improved stuck detection and course correction
+    private Vector3 _lastPlayerPosition = Vector3.Zero;
+    private DateTime _lastPositionUpdate = DateTime.MinValue;
+    private Queue<Vector3> _recentPositions = new Queue<Vector3>();
+    private const int MAX_POSITION_HISTORY = 10;
+    private bool _isStuck = false;
+    private DateTime _stuckDetectionTime = DateTime.MinValue;
+    private Vector3 _stuckPosition = Vector3.Zero;
+    private int _stuckRecoveryAttempts = 0;
+    private List<Vector3> _alternativeWaypoints = new List<Vector3>();
+    private bool _usingAlternativeRoute = false;
+    
     // Terrain data
     private byte[,] _tiles;
     private int _numCols, _numRows;
@@ -81,6 +93,9 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             // Update leader action state (Phase 1)
             UpdateLeaderActionState();
+            
+            // Update stuck detection and course correction
+            UpdateStuckDetection();
             
             // Check for gem leveling
             CheckAndLevelGems();
@@ -217,6 +232,245 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                actionFlags.ToString().Contains("Attack") ||
                actionFlags.ToString().Contains("Cast") ||
                actionFlags.ToString().Contains("Skill");
+    }
+    
+    /// <summary>
+    /// Updates stuck detection system with position tracking and course correction
+    /// </summary>
+    private void UpdateStuckDetection()
+    {
+        var currentPosition = GameController.Player.Pos;
+        var now = DateTime.Now;
+        
+        // Update position history
+        _recentPositions.Enqueue(currentPosition);
+        if (_recentPositions.Count > MAX_POSITION_HISTORY)
+        {
+            _recentPositions.Dequeue();
+        }
+        
+        // Check if we've moved significantly since last update
+        if (Vector3.Distance(currentPosition, _lastPlayerPosition) > Settings.Safety.StuckDistanceThreshold.Value)
+        {
+            _lastPlayerPosition = currentPosition;
+            _lastPositionUpdate = now;
+            
+            // Reset stuck state if we're moving
+            if (_isStuck)
+            {
+                _isStuck = false;
+                _stuckRecoveryAttempts = 0;
+                _usingAlternativeRoute = false;
+                _alternativeWaypoints.Clear();
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage("Unstuck - movement detected", 3);
+                }
+            }
+        }
+        
+        // Check for stuck condition
+        if (!_isStuck && _recentPositions.Count >= 5)
+        {
+            var timeSinceMovement = now - _lastPositionUpdate;
+            
+            // Check if we've been stationary for too long
+            if (timeSinceMovement > TimeSpan.FromMilliseconds(Settings.Safety.StuckTimeThreshold.Value))
+            {
+                var positionVariance = CalculatePositionVariance();
+                
+                // If position variance is low, we're probably stuck
+                if (positionVariance < Settings.Safety.StuckDistanceThreshold.Value)
+                {
+                    DetectStuckCondition(currentPosition, now);
+                }
+            }
+        }
+        
+        // Handle stuck recovery
+        if (_isStuck)
+        {
+            HandleStuckRecovery(currentPosition, now);
+        }
+    }
+    
+    /// <summary>
+    /// Calculates position variance to detect stuck conditions
+    /// </summary>
+    private float CalculatePositionVariance()
+    {
+        if (_recentPositions.Count < 2)
+            return float.MaxValue;
+        
+        var positions = _recentPositions.ToArray();
+        var avgPosition = Vector3.Zero;
+        
+        // Calculate average position
+        foreach (var pos in positions)
+        {
+            avgPosition += pos;
+        }
+        avgPosition /= positions.Length;
+        
+        // Calculate variance
+        var totalVariance = 0f;
+        foreach (var pos in positions)
+        {
+            totalVariance += Vector3.Distance(pos, avgPosition);
+        }
+        
+        return totalVariance / positions.Length;
+    }
+    
+    /// <summary>
+    /// Detects and handles stuck conditions
+    /// </summary>
+    private void DetectStuckCondition(Vector3 currentPosition, DateTime now)
+    {
+        _isStuck = true;
+        _stuckDetectionTime = now;
+        _stuckPosition = currentPosition;
+        _stuckRecoveryAttempts = 0;
+        
+        if (Settings.Debug.EnableActionStateLogging.Value)
+        {
+            LogMessage($"Stuck detected at position: {currentPosition}", 2);
+        }
+        
+        // Generate alternative waypoints for course correction
+        GenerateAlternativeWaypoints(currentPosition);
+    }
+    
+    /// <summary>
+    /// Handles stuck recovery logic
+    /// </summary>
+    private void HandleStuckRecovery(Vector3 currentPosition, DateTime now)
+    {
+        var stuckDuration = now - _stuckDetectionTime;
+        
+        // If we've been stuck for too long, try more aggressive recovery
+        if (stuckDuration > TimeSpan.FromSeconds(10))
+        {
+            _stuckRecoveryAttempts++;
+            
+            if (_stuckRecoveryAttempts <= Settings.Safety.MaxStuckRecoveryAttempts.Value)
+            {
+                // Clear current tasks and use alternative route
+                _tasks.Clear();
+                _usingAlternativeRoute = true;
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage($"Stuck recovery attempt #{_stuckRecoveryAttempts}", 2);
+                }
+            }
+            else
+            {
+                // Too many recovery attempts, pause briefly
+                _nextBotAction = DateTime.Now.AddSeconds(5);
+                _stuckRecoveryAttempts = 0;
+                
+                if (Settings.Debug.EnableActionStateLogging.Value)
+                {
+                    LogMessage("Max stuck recovery attempts reached, pausing", 1);
+                }
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Generates alternative waypoints for course correction
+    /// </summary>
+    private void GenerateAlternativeWaypoints(Vector3 stuckPosition)
+    {
+        _alternativeWaypoints.Clear();
+        
+        if (_followTarget == null)
+            return;
+        
+        var leaderPos = _followTarget.Pos;
+        var directionToLeader = leaderPos - stuckPosition;
+        var distance = directionToLeader.Length();
+        
+        if (distance > 0)
+        {
+            directionToLeader = directionToLeader / distance;
+            
+            // Generate waypoints in a semi-circle around the stuck position
+            var baseDistance = Settings.Safety.RandomMovementRange.Value;
+            var angles = new float[] { -45f, -22.5f, 0f, 22.5f, 45f };
+            
+            foreach (var angle in angles)
+            {
+                var radians = angle * (float)Math.PI / 180f;
+                var rotatedDirection = RotateVector(directionToLeader, radians);
+                var alternativePos = stuckPosition + rotatedDirection * baseDistance;
+                
+                // Check if this position is likely to be pathable
+                if (IsPositionLikelyPathable(alternativePos))
+                {
+                    _alternativeWaypoints.Add(alternativePos);
+                }
+            }
+        }
+        
+        // Add random movement points if no good alternatives found
+        if (_alternativeWaypoints.Count == 0)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                var randomDirection = new Vector3(
+                    _random.Next(-100, 100),
+                    _random.Next(-100, 100),
+                    0
+                );
+                randomDirection = randomDirection / randomDirection.Length();
+                var randomPos = stuckPosition + randomDirection * baseDistance;
+                _alternativeWaypoints.Add(randomPos);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Rotates a vector by the given angle in radians
+    /// </summary>
+    private Vector3 RotateVector(Vector3 vector, float angleRadians)
+    {
+        var cos = (float)Math.Cos(angleRadians);
+        var sin = (float)Math.Sin(angleRadians);
+        
+        return new Vector3(
+            vector.X * cos - vector.Y * sin,
+            vector.X * sin + vector.Y * cos,
+            vector.Z
+        );
+    }
+    
+    /// <summary>
+    /// Simple check if a position is likely to be pathable
+    /// </summary>
+    private bool IsPositionLikelyPathable(Vector3 position)
+    {
+        // Basic bounds checking
+        if (position.X < 0 || position.Y < 0)
+            return false;
+        
+        // Check against terrain data if available
+        if (_tiles != null && _numRows > 0 && _numCols > 0)
+        {
+            var tileX = (int)(position.X / 23f); // Convert to tile coordinates
+            var tileY = (int)(position.Y / 23f);
+            
+            if (tileX >= 0 && tileX < _numCols && tileY >= 0 && tileY < _numRows)
+            {
+                var terrainValue = _tiles[tileY, tileX];
+                // Values 1-5 are generally pathable, 255 is blocked
+                return terrainValue > 0 && terrainValue < 100;
+            }
+        }
+        
+        return true; // Default to pathable if no terrain data
     }
     
     /// <summary>
@@ -420,13 +674,20 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
 
     /// <summary>
-    /// Plans tasks based on leader position and current state
+    /// Plans tasks based on leader position and current state with course correction
     /// </summary>
     private void PlanTasks()
     {
         // Clear old tasks if we have too many
         if (_tasks.Count > 5)
             _tasks.Clear();
+        
+        // If we're stuck and using alternative route, prioritize alternative waypoints
+        if (_isStuck && _usingAlternativeRoute && _alternativeWaypoints.Count > 0)
+        {
+            PlanAlternativeRoute();
+            return;
+        }
         
         if (_followTarget == null)
         {
@@ -457,7 +718,25 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             if (Settings.Movement.IsCloseFollowEnabled.Value && distance > followDistance && shouldFollow)
             {
-                _tasks.Add(new TaskNode(_followTarget.Pos, followDistance));
+                var targetPosition = GetSmartFollowPosition();
+                
+                // Use course correction if we've been stuck recently
+                if (_isStuck && _alternativeWaypoints.Count > 0)
+                {
+                    var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
+                    if (alternativeTarget != Vector3.Zero)
+                    {
+                        _tasks.Add(new TaskNode(alternativeTarget, followDistance));
+                    }
+                    else
+                    {
+                        _tasks.Add(new TaskNode(targetPosition, followDistance));
+                    }
+                }
+                else
+                {
+                    _tasks.Add(new TaskNode(targetPosition, followDistance));
+                }
             }
             
             // Check for waypoint claiming (only when not in combat)
@@ -483,7 +762,24 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             if (_tasks.Count == 0)
             {
                 var targetPosition = GetSmartFollowPosition();
-                _tasks.Add(new TaskNode(targetPosition, followDistance));
+                
+                // Use course correction if we're stuck
+                if (_isStuck && _alternativeWaypoints.Count > 0)
+                {
+                    var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
+                    if (alternativeTarget != Vector3.Zero)
+                    {
+                        _tasks.Add(new TaskNode(alternativeTarget, followDistance));
+                    }
+                    else
+                    {
+                        _tasks.Add(new TaskNode(targetPosition, followDistance));
+                    }
+                }
+                else
+                {
+                    _tasks.Add(new TaskNode(targetPosition, followDistance));
+                }
             }
             else
             {
@@ -492,12 +788,76 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 var targetPosition = GetSmartFollowPosition();
                 if (Vector3.Distance(lastTask.WorldPosition, targetPosition) > followDistance)
                 {
-                    _tasks.Add(new TaskNode(targetPosition, followDistance));
+                    // Use course correction if we're stuck
+                    if (_isStuck && _alternativeWaypoints.Count > 0)
+                    {
+                        var alternativeTarget = GetBestAlternativeWaypoint(targetPosition);
+                        if (alternativeTarget != Vector3.Zero)
+                        {
+                            _tasks.Add(new TaskNode(alternativeTarget, followDistance));
+                        }
+                        else
+                        {
+                            _tasks.Add(new TaskNode(targetPosition, followDistance));
+                        }
+                    }
+                    else
+                    {
+                        _tasks.Add(new TaskNode(targetPosition, followDistance));
+                    }
                 }
             }
         }
         
         _lastTargetPosition = _followTarget.Pos;
+    }
+    
+    /// <summary>
+    /// Plans alternative route when stuck
+    /// </summary>
+    private void PlanAlternativeRoute()
+    {
+        if (_alternativeWaypoints.Count == 0)
+            return;
+        
+        var playerPos = GameController.Player.Pos;
+        
+        // Find the closest alternative waypoint that we haven't tried yet
+        var bestWaypoint = _alternativeWaypoints
+            .OrderBy(w => Vector3.Distance(playerPos, w))
+            .FirstOrDefault();
+        
+        if (bestWaypoint != Vector3.Zero)
+        {
+            _tasks.Add(new TaskNode(bestWaypoint, Settings.Movement.PathfindingNodeDistance.Value));
+            
+            // Remove the waypoint so we don't keep trying it
+            _alternativeWaypoints.Remove(bestWaypoint);
+            
+            if (Settings.Debug.EnableActionStateLogging.Value)
+            {
+                LogMessage($"Using alternative waypoint: {bestWaypoint}", 3);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Gets the best alternative waypoint for course correction
+    /// </summary>
+    private Vector3 GetBestAlternativeWaypoint(Vector3 targetPosition)
+    {
+        if (_alternativeWaypoints.Count == 0)
+            return Vector3.Zero;
+        
+        var playerPos = GameController.Player.Pos;
+        
+        // Find waypoint that's closest to the target but not too close to current position
+        var bestWaypoint = _alternativeWaypoints
+            .Where(w => Vector3.Distance(playerPos, w) > Settings.Movement.PathfindingNodeDistance.Value / 2)
+            .OrderBy(w => Vector3.Distance(w, targetPosition))
+            .FirstOrDefault();
+        
+        return bestWaypoint != Vector3.Zero ? bestWaypoint : _alternativeWaypoints.First();
     }
     
     /// <summary>
@@ -762,6 +1122,17 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _lastGemLevelCheck = DateTime.MinValue;
         _isLevelingGems = false;
         
+        // Reset stuck detection state
+        _lastPlayerPosition = Vector3.Zero;
+        _lastPositionUpdate = DateTime.MinValue;
+        _recentPositions.Clear();
+        _isStuck = false;
+        _stuckDetectionTime = DateTime.MinValue;
+        _stuckPosition = Vector3.Zero;
+        _stuckRecoveryAttempts = 0;
+        _alternativeWaypoints.Clear();
+        _usingAlternativeRoute = false;
+        
         // Load area transitions
         foreach (var entity in GameController.EntityListWrapper.Entities)
         {
@@ -868,6 +1239,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         
         Graphics.DrawText($"Tasks: {_tasks.Count}", new Vector2(10, yPos), SharpDX.Color.White);
         yPos += 20;
+        
+        // Show stuck detection status
+        var stuckColor = _isStuck ? SharpDX.Color.Red : SharpDX.Color.Green;
+        Graphics.DrawText($"Stuck Detection: {(_isStuck ? "STUCK" : "NORMAL")}", new Vector2(10, yPos), stuckColor);
+        yPos += 20;
+        
+        if (_isStuck)
+        {
+            Graphics.DrawText($"Stuck Recovery Attempts: {_stuckRecoveryAttempts}", new Vector2(10, yPos), SharpDX.Color.Orange);
+            yPos += 20;
+            Graphics.DrawText($"Alternative Waypoints: {_alternativeWaypoints.Count}", new Vector2(10, yPos), SharpDX.Color.Cyan);
+            yPos += 20;
+        }
         
         // Show next action time
         var nextActionDelay = (_nextBotAction - DateTime.Now).TotalMilliseconds;
