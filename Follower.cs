@@ -35,9 +35,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     private Entity _followTarget;
 
     private bool _hasUsedWP = false;
-    
-    // Teleport detection variables
-    private Vector3 _lastKnownGoodPosition = Vector3.Zero;
+
+	private DateTime _lastLinkAttempt = DateTime.MinValue;
+
+	// Teleport detection variables
+	private Vector3 _lastKnownGoodPosition = Vector3.Zero;
     private float _lastDistanceToTarget = 0f;
     private bool _isSearchingForTeleport = false;
     private DateTime _teleportSearchStartTime;
@@ -178,7 +180,56 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         _portalUsedTime = DateTime.MinValue;
     }
 
-    public override void AreaChange(AreaInstance area)
+	private void MoveMouseToLeader()
+	{
+		if (_followTarget == null) return;
+		var screenPos = WorldToValidScreenPosition(_followTarget.Pos);
+		Mouse.SetCursorPos(screenPos);
+		System.Threading.Thread.Sleep(50); // Small delay for cursor positioning
+	}
+
+	private void HandleLinkBuff()
+	{
+		if (!Settings.EnableLinkSupport.Value)
+			return;
+
+		float linkTime;
+		bool hasLink = IsLeaderLinkActive(out linkTime);
+
+		// Apply link if not present or if 5 seconds have passed since last cast
+		if (!hasLink || DateTime.Now - _lastLinkAttempt > TimeSpan.FromSeconds(5))
+		{
+			MoveMouseToLeader(); // Move mouse before pressing key
+			Input.KeyDown(Settings.LinkKey);
+			Input.KeyUp(Settings.LinkKey);
+			_nextBotAction = DateTime.Now.AddMilliseconds(500); // Small delay after reapplying
+			_lastLinkAttempt = DateTime.Now;
+		}
+	}
+
+	private bool IsLeaderLinkActive(out float secondsRemaining)
+	{
+		secondsRemaining = 0;
+		if (_followTarget == null || !_followTarget.IsValid)
+			return false;
+
+		var buffs = _followTarget.GetComponent<Buffs>();
+		if (buffs?.BuffsList == null)
+			return false;
+
+		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
+			b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase));
+
+		if (linkBuff != null && linkBuff.Timer != null)
+		{
+			secondsRemaining = linkBuff.Timer;
+			return true;
+		}
+
+		return false;
+	}
+
+	public override void AreaChange(AreaInstance area)
     {
         _isTransitioning = true;
         _areaChangeTime = DateTime.Now;
@@ -452,9 +503,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 
                     // Cache the current follow target (using multiple leader support)
                     _followTarget = GetBestAvailableLeader();
-                    
-                    // Check inventory management
-                    CheckInventoryManagement();
+
+					// Handle link buff logic
+					HandleLinkBuff();
+
+					// Check inventory management
+					//CheckInventoryManagement();
                     
                     // Refresh terrain data for dynamic obstacle detection
                     RefreshTerrainData();

@@ -20,9 +20,13 @@ public class FollowerSettings : ISettings
     [Menu("Move CMD Frequency")] public RangeNode<int> BotInputFrequency { get; set; } = new RangeNode<int>(50, 10, 250);
     [Menu("Stop Path Distance")] public RangeNode<int> ClearPathDistance { get; set; } = new RangeNode<int>(500, 100, 5000);
     [Menu("Random Click Offset")] public RangeNode<int> RandomClickOffset { get; set; } = new RangeNode<int>(10, 1, 100);
-    
-    // Dash Settings
-    [Menu("Allow Dash")] public ToggleNode IsDashEnabled { get; set; } = new ToggleNode(true);
+
+	[Menu("Enable Link Support")] public ToggleNode EnableLinkSupport { get; set; } = new ToggleNode(false);
+	[Menu("Link Key")] public HotkeyNode LinkKey { get; set; } = new HotkeyNode(Keys.None);
+
+
+	// Dash Settings
+	[Menu("Allow Dash")] public ToggleNode IsDashEnabled { get; set; } = new ToggleNode(true);
     [Menu("Dash Key")] public HotkeyNode DashKey { get; set; } = Keys.W;
     [Menu("Aggressive Dash")] public ToggleNode AggressiveDash { get; set; } = new ToggleNode(true);
     [Menu("Dash Distance Threshold")] public RangeNode<int> DashDistanceThreshold { get; set; } = new RangeNode<int>(800, 200, 2000);
