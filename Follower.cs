@@ -303,6 +303,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
     }
 
+	private DateTime _lastLinkAttempt = DateTime.MinValue;
+
 	private void HandleLinkBuff()
 	{
 		if (!Settings.Link.EnableLinkSupport.Value)
@@ -311,14 +313,24 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		float linkTime;
 		bool hasLink = IsLeaderLinkActive(out linkTime);
 
-		// If not applied or less than 5 seconds left, reapply
-		if (!hasLink || linkTime < 5f)
+		// Only reapply if not present or less than 2 seconds left, and not recently attempted
+		if ((!hasLink || linkTime < 2f) && DateTime.Now - _lastLinkAttempt > TimeSpan.FromSeconds(2))
 		{
+			MoveMouseToLeader(); // Move mouse before pressing key
 			Input.KeyDown(Settings.Link.LinkKey);
 			Input.KeyUp(Settings.Link.LinkKey);
 			RecordAction(); // To respect rate limiting
 			_nextBotAction = DateTime.Now.AddMilliseconds(500); // Small delay after reapplying
+			_lastLinkAttempt = DateTime.Now;
 		}
+	}
+
+	private void MoveMouseToLeader()
+	{
+		if (_followTarget == null) return;
+		var screenPos = WorldToScreenPosition(_followTarget.Pos);
+		Mouse.SetCursorPos(screenPos);
+		System.Threading.Thread.Sleep(50); // Small delay for cursor positioning
 	}
 
 	/// <summary>
@@ -1323,10 +1335,33 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 	private bool IsLeaderLinkActive(out float secondsRemaining)
 	{
 		secondsRemaining = 0;
-		if (_followTarget == null) return false;
+
+		if (_followTarget == null || !_followTarget.IsValid)
+		{
+			LogMessage("Debug: _followTarget is null or invalid.", 1);
+			return false;
+		}
 
 		var buffs = _followTarget.GetComponent<Buffs>();
-		if (buffs == null) return false;
+		if (buffs == null)
+		{
+			LogMessage("Debug: Buffs component is null.", 1);
+			return false;
+		}
+
+		// Log all buffs for debugging
+		if (buffs.BuffsList != null && buffs.BuffsList.Count > 0)
+		{
+			LogMessage($"Debug: Buffs count: {buffs.BuffsList.Count}", 1);
+			foreach (var buff in buffs.BuffsList)
+			{
+				LogMessage($"Buff: Name={buff.Name}, Timer={buff.Timer}, Charges={buff.Charges}", 1);
+			}
+		}
+		else
+		{
+			LogMessage("Debug: BuffsList is empty or null.", 1);
+		}
 
 		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
 			b.Name != null && b.Name.Contains("link_source", StringComparison.OrdinalIgnoreCase));
@@ -1338,6 +1373,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		}
 		return false;
 	}
+
 
 	private void ExecuteWaypointTask(TaskNode task, float distance)
     {
