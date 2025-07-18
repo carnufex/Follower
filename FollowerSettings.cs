@@ -25,7 +25,8 @@ public class FollowerSettings : ISettings
     public GemSettings Gems { get; set; } = new();
     public PluginSettings Plugins { get; set; } = new();
     public PerformanceSettings Performance { get; set; } = new();
-    public DebugSettings Debug { get; set; } = new();
+	public LinkSettings Link { get; set; } = new();
+	public DebugSettings Debug { get; set; } = new();
 }
 
 [Submenu(CollapsedByDefault = true)]
@@ -277,6 +278,16 @@ public class PerformanceSettings
     
     [Menu("Log Level", "Logging level (0=Debug, 1=Info, 2=Warning, 3=Error, 4=Critical)")]
     public RangeNode<int> LogLevel { get; set; } = new RangeNode<int>(1, 0, 4);
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class LinkSettings
+{
+	[Menu("Link Key", "Key used to apply Link skill")]
+	public HotkeyNode LinkKey { get; set; } = Keys.R;
+
+	[Menu("Enable Link Support", "Enable automatic Link application")]
+	public ToggleNode EnableLinkSupport { get; set; } = new ToggleNode(false);
 }
 
 [Submenu(CollapsedByDefault = true)]

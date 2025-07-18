@@ -76,8 +76,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         Settings.ToggleFollower.OnValueChanged += () => { 
             Input.RegisterKey(Settings.ToggleFollower.Value); 
         };
-        
-        return base.Initialise();
+
+		Input.RegisterKey(Settings.Link.LinkKey.Value);
+		Settings.Link.LinkKey.OnValueChanged += () => {
+			Input.RegisterKey(Settings.Link.LinkKey.Value);
+		};
+
+		return base.Initialise();
     }
 
     public override void AreaChange(AreaInstance area)
@@ -223,9 +228,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             // Update stuck detection and course correction
             UpdateStuckDetection();
-            
-            // Check for gem leveling
-            CheckAndLevelGems();
+
+			HandleLinkBuff();
+
+			// Check for gem leveling
+			CheckAndLevelGems();
             
             // Plan what to do
             PlanTasks();
@@ -295,11 +302,29 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             return null;
         }
     }
-    
-    /// <summary>
-    /// Updates the leader's action state for smarter following behavior
-    /// </summary>
-    private void UpdateLeaderActionState()
+
+	private void HandleLinkBuff()
+	{
+		if (!Settings.Link.EnableLinkSupport.Value)
+			return;
+
+		float linkTime;
+		bool hasLink = IsLeaderLinkActive(out linkTime);
+
+		// If not applied or less than 5 seconds left, reapply
+		if (!hasLink || linkTime < 5f)
+		{
+			Input.KeyDown(Settings.Link.LinkKey);
+			Input.KeyUp(Settings.Link.LinkKey);
+			RecordAction(); // To respect rate limiting
+			_nextBotAction = DateTime.Now.AddMilliseconds(500); // Small delay after reapplying
+		}
+	}
+
+	/// <summary>
+	/// Updates the leader's action state for smarter following behavior
+	/// </summary>
+	private void UpdateLeaderActionState()
     {
         if (_followTarget == null)
         {
@@ -1294,8 +1319,27 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             Input.KeyUp(Settings.Movement.MovementKey);
         }
     }
-    
-    private void ExecuteWaypointTask(TaskNode task, float distance)
+
+	private bool IsLeaderLinkActive(out float secondsRemaining)
+	{
+		secondsRemaining = 0;
+		if (_followTarget == null) return false;
+
+		var buffs = _followTarget.GetComponent<Buffs>();
+		if (buffs == null) return false;
+
+		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
+			b.Name == "soul_link_source" || b.Name == "protective_link_source");
+
+		if (linkBuff != null)
+		{
+			secondsRemaining = linkBuff.Timer;
+			return true;
+		}
+		return false;
+	}
+
+	private void ExecuteWaypointTask(TaskNode task, float distance)
     {
         var screenPos = WorldToScreenPosition(task.WorldPosition);
         
@@ -1605,9 +1649,18 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             Graphics.DrawText("GEMS AVAILABLE", new Vector2(10, yPos), SharpDX.Color.Green);
         }
-        
-        // Draw task path
-        if (_tasks.Count > 1)
+
+		if (Settings.Link.EnableLinkSupport.Value && _followTarget != null)
+		{
+			float linkTime;
+			bool hasLink = IsLeaderLinkActive(out linkTime);
+			var linkColor = hasLink && linkTime > 5f ? SharpDX.Color.Green : SharpDX.Color.Red;
+			Graphics.DrawText($"Link Buff: {(hasLink ? $"{linkTime:F1}s" : "Not Active")}", new Vector2(10, yPos), linkColor);
+			yPos += 20;
+		}
+
+		// Draw task path
+		if (_tasks.Count > 1)
         {
             for (int i = 1; i < _tasks.Count; i++)
             {
