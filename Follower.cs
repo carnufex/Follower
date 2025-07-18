@@ -1329,7 +1329,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		if (buffs == null) return false;
 
 		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
-			b.Name == "soul_link_source" || b.Name == "protective_link_source");
+			b.Name != null && b.Name.Contains("link_source", StringComparison.OrdinalIgnoreCase));
 
 		if (linkBuff != null)
 		{
