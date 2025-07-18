@@ -1364,7 +1364,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		}
 
 		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
-			b.Name != null && b.Name.Contains("link_source", StringComparison.OrdinalIgnoreCase));
+			b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase));
 
 		if (linkBuff != null)
 		{
