@@ -1349,13 +1349,25 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 			return false;
 		}
 
-		// Log all buffs for debugging
 		if (buffs.BuffsList != null && buffs.BuffsList.Count > 0)
 		{
-			LogMessage($"Debug: Buffs count: {buffs.BuffsList.Count}", 1);
-			foreach (var buff in buffs.BuffsList)
+			foreach (var buff in buffs.BuffsList.Where(b => b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase)))
 			{
-				LogMessage($"Buff: Name={buff.Name}, Timer={buff.Timer}, Charges={buff.Charges}", 1);
+				LogMessage($"--- Buff: {buff.Name} ---", 1);
+				var buffType = buff.GetType();
+				foreach (var prop in buffType.GetProperties())
+				{
+					object value;
+					try
+					{
+						value = prop.GetValue(buff);
+					}
+					catch (Exception ex)
+					{
+						value = $"Error: {ex.Message}";
+					}
+					LogMessage($"{prop.Name}: {value}", 1);
+				}
 			}
 		}
 		else
