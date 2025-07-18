@@ -313,8 +313,8 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		float linkTime;
 		bool hasLink = IsLeaderLinkActive(out linkTime);
 
-		// Only reapply if not present or less than 2 seconds left, and not recently attempted
-		if ((!hasLink || linkTime < 2f) && DateTime.Now - _lastLinkAttempt > TimeSpan.FromSeconds(2))
+		// Apply link if not present or if 5 seconds have passed since last cast
+		if (!hasLink || DateTime.Now - _lastLinkAttempt > TimeSpan.FromSeconds(5))
 		{
 			MoveMouseToLeader(); // Move mouse before pressing key
 			Input.KeyDown(Settings.Link.LinkKey);
@@ -1337,52 +1337,21 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		secondsRemaining = 0;
 
 		if (_followTarget == null || !_followTarget.IsValid)
-		{
-			LogMessage("Debug: _followTarget is null or invalid.", 1);
 			return false;
-		}
 
 		var buffs = _followTarget.GetComponent<Buffs>();
-		if (buffs == null)
-		{
-			LogMessage("Debug: Buffs component is null.", 1);
+		if (buffs?.BuffsList == null)
 			return false;
-		}
-
-		if (buffs.BuffsList != null && buffs.BuffsList.Count > 0)
-		{
-			foreach (var buff in buffs.BuffsList.Where(b => b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase)))
-			{
-				LogMessage($"--- Buff: {buff.Name} ---", 1);
-				var buffType = buff.GetType();
-				foreach (var prop in buffType.GetProperties())
-				{
-					object value;
-					try
-					{
-						value = prop.GetValue(buff);
-					}
-					catch (Exception ex)
-					{
-						value = $"Error: {ex.Message}";
-					}
-					LogMessage($"{prop.Name}: {value}", 1);
-				}
-			}
-		}
-		else
-		{
-			LogMessage("Debug: BuffsList is empty or null.", 1);
-		}
 
 		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
 			b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase));
 
-		if (linkBuff != null)
+		if (linkBuff != null && linkBuff.Timer != null)
 		{
 			secondsRemaining = linkBuff.Timer;
 			return true;
 		}
+
 		return false;
 	}
 
