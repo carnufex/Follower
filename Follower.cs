@@ -504,9 +504,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                     // Cache the current follow target (using multiple leader support)
                     _followTarget = GetBestAvailableLeader();
 
-					// Handle link buff logic
-					HandleLinkBuff();
-
 					// Check inventory management
 					//CheckInventoryManagement();
                     
@@ -624,9 +621,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             
             _lastTargetPosition = _followTarget.Pos;
             _lastDistanceToTarget = distanceFromFollower;
-            
-            // Check for gems that need leveling
-            CheckAndLevelGems(distanceFromFollower);
+
+			// Handle link buff logic
+			HandleLinkBuff();
+
+			// Check for gems that need leveling
+			CheckAndLevelGems(distanceFromFollower);
         }
         // Leader is null but we have tracked them this map.
         // Try using transition to follow them to their map
