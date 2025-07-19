@@ -891,98 +891,102 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     }
 
 
-    /// <summary>
-    /// Plans movement tasks based on current state using advanced pathfinding
-    /// </summary>
-    private void PlanTasks()
-    {
-        // Clear old tasks if we have too many
-        if (_tasks.Count > 5)
-            _tasks.Clear();
-        
-        // If we're stuck and using alternative route, prioritize alternative waypoints
-        if (_isStuck && _usingAlternativeRoute && _alternativeWaypoints.Count > 0)
-        {
-            PlanAlternativeRoute();
-            return;
-        }
-        
-        if (_followTarget == null)
-        {
-            // Leader not found, try to use last known position for area transition
-            if (_lastTargetPosition != Vector3.Zero && _tasks.Count == 0)
-            {
-                var nearbyTransition = _areaTransitions.Values
-                    .Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.Movement.ClearPathDistance.Value)
-                    .OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
-                    .FirstOrDefault();
-                
-                if (nearbyTransition != null)
-                {
-                    _tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.Movement.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
-                }
-            }
-            return;
-        }
-        
-        var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-        
-        // Combat mode awareness: Adjust following behavior based on leader's state
-        var followDistance = GetSmartFollowDistance(distance);
-        var shouldFollow = ShouldFollowInCurrentState(distance);
-        
-        // If leader is close, don't add tasks unless close follow is enabled
-        if (distance < Settings.Movement.ClearPathDistance.Value)
-        {
-            if (Settings.Movement.IsCloseFollowEnabled.Value && distance > followDistance && shouldFollow)
-            {
-				//var targetPosition = GetSmartFollowPosition();
-				//PlanPathfindingTasks(targetPosition, followDistance);
-				var targetPosition = _followTarget.Pos; // Use leader's actual position
-				PlanPathfindingTasks(targetPosition, 20); // Use small bounds for close-follow
-			}
-            
-            // Check for waypoint claiming (only when not in combat)
-            if (!_hasUsedWP && !_combatModeActive)
-            {
-                var waypoint = GameController.EntityListWrapper.Entities.FirstOrDefault(e => 
-                    e.Type == EntityType.Waypoint && 
-                    Vector3.Distance(GameController.Player.Pos, e.Pos) < Settings.Movement.ClearPathDistance.Value);
-                    
-                if (waypoint != null)
-                {
-                    _hasUsedWP = true;
-                    _tasks.Add(new TaskNode(waypoint.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.ClaimWaypoint));
-                }
-            }
-            
-            return;
-        }
-        
-        // Leader is far - decide whether to follow based on current state
-        if (shouldFollow)
-        {
-            var targetPosition = GetSmartFollowPosition();
-            
-            // Check if we need to recalculate path
-            if (ShouldRecalculatePath(targetPosition))
-            {
-                PlanPathfindingTasks(targetPosition, followDistance);
-            }
-            else if (_tasks.Count == 0)
-            {
-                // No current path, create one
-                PlanPathfindingTasks(targetPosition, followDistance);
-            }
-        }
-        
-        _lastTargetPosition = _followTarget.Pos;
-    }
+	/// <summary>
+	/// Plans movement tasks based on current state using advanced pathfinding
+	/// </summary>
+	private void PlanTasks()
+	{
+		// Clear old tasks if we have too many
+		if (_tasks.Count > 5)
+			_tasks.Clear();
 
-    /// <summary>
-    /// Plans tasks using advanced pathfinding instead of simple movement
-    /// </summary>
-    private void PlanPathfindingTasks(Vector3 targetPosition, float followDistance)
+		// If we're stuck and using alternative route, prioritize alternative waypoints
+		if (_isStuck && _usingAlternativeRoute && _alternativeWaypoints.Count > 0)
+		{
+			PlanAlternativeRoute();
+			return;
+		}
+
+		if (_followTarget == null)
+		{
+			// Leader not found, try to use last known position for area transition
+			if (_lastTargetPosition != Vector3.Zero && _tasks.Count == 0)
+			{
+				var nearbyTransition = _areaTransitions.Values
+					.Where(t => Vector3.Distance(_lastTargetPosition, t.Pos) < Settings.Movement.ClearPathDistance.Value)
+					.OrderBy(t => Vector3.Distance(_lastTargetPosition, t.Pos))
+					.FirstOrDefault();
+
+				if (nearbyTransition != null)
+				{
+					_tasks.Add(new TaskNode(nearbyTransition.Pos, Settings.Movement.TransitionDistance.Value, TaskNode.TaskNodeType.Transition));
+				}
+			}
+			return;
+		}
+
+		var distance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+
+		// If we are close to the leader
+		if (distance < Settings.Movement.ClearPathDistance.Value)
+		{
+			// Remove movement/transition tasks
+			if (_tasks.Count > 0)
+			{
+				for (var i = _tasks.Count - 1; i >= 0; i--)
+					if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
+						_tasks.RemoveAt(i);
+			}
+			// If close-follow is enabled and not close enough, add a direct movement task
+			else if (Settings.Movement.IsCloseFollowEnabled.Value)
+			{
+				if (distance >= Settings.Movement.PathfindingNodeDistance.Value)
+					_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+			}
+
+			// Quest loot logic (optional, keep if you use it)
+			// var questLoot = GetLootableQuestItem();
+			// if (questLoot != null &&
+			//     Vector3.Distance(GameController.Player.Pos, questLoot.Pos) < Settings.Movement.ClearPathDistance.Value &&
+			//     _tasks.FirstOrDefault(I => I.Type == TaskNode.TaskNodeType.Loot) == null)
+			//     _tasks.Add(new TaskNode(questLoot.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.Loot));
+
+			// Waypoint logic
+			if (!_hasUsedWP && !_combatModeActive)
+			{
+				var waypoint = GameController.EntityListWrapper.Entities.FirstOrDefault(e =>
+					e.Type == EntityType.Waypoint &&
+					Vector3.Distance(GameController.Player.Pos, e.Pos) < Settings.Movement.ClearPathDistance.Value);
+
+				if (waypoint != null)
+				{
+					_hasUsedWP = true;
+					_tasks.Add(new TaskNode(waypoint.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.ClaimWaypoint));
+				}
+			}
+
+			_lastTargetPosition = _followTarget.Pos;
+			return;
+		}
+
+		// If leader is far, add movement tasks as needed
+		if (_tasks.Count == 0)
+			_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+		else
+		{
+			var distanceFromLastTask = Vector3.Distance(_tasks.Last().WorldPosition, _followTarget.Pos);
+			if (distanceFromLastTask >= Settings.Movement.PathfindingNodeDistance.Value)
+				_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+		}
+
+		_lastTargetPosition = _followTarget.Pos;
+	}
+
+
+	/// <summary>
+	/// Plans tasks using advanced pathfinding instead of simple movement
+	/// </summary>
+	private void PlanPathfindingTasks(Vector3 targetPosition, float followDistance)
     {
         // Check if advanced pathfinding is enabled
         if (!Settings.Pathfinding.EnableAdvancedPathfinding.Value || !_pathFinderInitialized)
