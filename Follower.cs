@@ -1232,19 +1232,25 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
         else
         {
-            // If leader is visible but far away, use slow timing
-            var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-            if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
-            {
-                baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
-                randomDelay = _random.Next(150, 350);
-            }
-            else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
-            {
-                baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
-                randomDelay = _random.Next(100, 250);
-            }
-        }
+			// If leader is visible but far away, use slow timing
+			var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+			if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
+			{
+				baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
+				randomDelay = _random.Next(150, 350);
+			}
+			else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
+			{
+				baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
+				randomDelay = _random.Next(100, 250);
+			}
+
+			// Only run link logic when close to leader
+			if (leaderDistance <= Settings.Movement.NormalFollowDistance.Value)
+			{
+				HandleLinkBuff();
+			}
+		}
         
         _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
         
