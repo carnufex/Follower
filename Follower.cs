@@ -34,7 +34,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     
     // Action tracking to prevent kicks
     private Queue<DateTime> _recentActions = new Queue<DateTime>();
-    private const int MAX_ACTIONS_PER_SECOND = 2; // Very conservative limit
+    private const int MAX_ACTIONS_PER_SECOND = 4; // Very conservative limit
     
     // Leader action state tracking (Phase 1)
     private ActionFlags _leaderActionState = ActionFlags.None;
@@ -936,9 +936,11 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         {
             if (Settings.Movement.IsCloseFollowEnabled.Value && distance > followDistance && shouldFollow)
             {
-                var targetPosition = GetSmartFollowPosition();
-                PlanPathfindingTasks(targetPosition, followDistance);
-            }
+				//var targetPosition = GetSmartFollowPosition();
+				//PlanPathfindingTasks(targetPosition, followDistance);
+				var targetPosition = _followTarget.Pos; // Use leader's actual position
+				PlanPathfindingTasks(targetPosition, 20); // Use small bounds for close-follow
+			}
             
             // Check for waypoint claiming (only when not in combat)
             if (!_hasUsedWP && !_combatModeActive)
@@ -1232,25 +1234,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
         else
         {
-			// If leader is visible but far away, use slow timing
-			var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-			if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
-			{
-				baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
-				randomDelay = _random.Next(150, 350);
-			}
-			else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
-			{
-				baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
-				randomDelay = _random.Next(100, 250);
-			}
-
-			// Only run link logic when close to leader
-			if (leaderDistance <= Settings.Movement.NormalFollowDistance.Value)
-			{
-				HandleLinkBuff();
-			}
-		}
+            // If leader is visible but far away, use slow timing
+            var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
+            if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
+            {
+                baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
+                randomDelay = _random.Next(150, 350);
+            }
+            else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
+            {
+                baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
+                randomDelay = _random.Next(100, 250);
+            }
+        }
         
         _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
         
