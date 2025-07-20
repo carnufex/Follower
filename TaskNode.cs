@@ -14,7 +14,8 @@ namespace Follower
             Movement,
             Transition,
             Loot,
-            ClaimWaypoint
+            ClaimWaypoint,
+            Link
         }
         /// <summary>
         /// The position of the task in world space.

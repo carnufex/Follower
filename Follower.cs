@@ -970,6 +970,13 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 				}
 			}
 
+			// Ensure link buff is triggered when close to leader
+			if (Settings.Link.EnableLinkSupport.Value &&
+				_tasks.FirstOrDefault(t => t.Type == TaskNode.TaskNodeType.Link) == null)
+			{
+				_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.Link));
+			}
+
 			_lastTargetPosition = _followTarget.Pos;
 			return;
 		}
@@ -1234,12 +1241,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         //    baseDelay = Math.Max(baseDelay * 2, 500); // Double delay during combat, minimum 500ms
         //    randomDelay = _random.Next(200, 400); // Larger random delay during combat
         //}
-        
-        if (_followTarget != null)
-        {
-			HandleLinkBuff(); // leader visible, apply link
-        }
-        
+
         _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
         
         switch (currentTask.Type)
@@ -1258,7 +1260,12 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 ExecuteWaypointTask(currentTask, taskDistance);
                 RecordAction();
                 break;
-        }
+
+			case TaskNode.TaskNodeType.Link:
+				HandleLinkBuff();
+				RecordAction();
+				break;
+		}
         
         // Remove completed tasks
         if (taskDistance <= currentTask.Bounds)
