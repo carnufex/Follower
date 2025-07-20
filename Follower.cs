@@ -34,7 +34,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     
     // Action tracking to prevent kicks
     private Queue<DateTime> _recentActions = new Queue<DateTime>();
-    private const int MAX_ACTIONS_PER_SECOND = 4; // Very conservative limit
+    private const int MAX_ACTIONS_PER_SECOND = 8; // Very conservative limit
     
     // Leader action state tracking (Phase 1)
     private ActionFlags _leaderActionState = ActionFlags.None;
@@ -318,7 +318,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 			Input.KeyDown(Settings.Link.LinkKey);
 			Input.KeyUp(Settings.Link.LinkKey);
 			RecordAction(); // To respect rate limiting
-			_nextBotAction = DateTime.Now.AddMilliseconds(500); // Small delay after reapplying
 			_lastLinkAttempt = DateTime.Now;
 		}
 	}
@@ -1219,7 +1218,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         // Check if we're rate limited
         if (IsActionRateLimited())
         {
-            _nextBotAction = DateTime.Now.AddMilliseconds(1000 + _random.Next(200, 500)); // Wait at least 1 second
+            _nextBotAction = DateTime.Now.AddMilliseconds(_random.Next(200, 500)); // Wait at least 1 second
             return;
         }
         
@@ -1237,7 +1236,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         //    randomDelay = _random.Next(200, 400); // Larger random delay during combat
         //}
 
-        _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
+        _nextBotAction = DateTime.Now.AddMilliseconds(randomDelay);
         
         switch (currentTask.Type)
         {
