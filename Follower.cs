@@ -936,17 +936,19 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		if (distance < Settings.Movement.ClearPathDistance.Value)
 		{
 			// Remove movement/transition tasks
-			if (_tasks.Count > 0)
-			{
-				for (var i = _tasks.Count - 1; i >= 0; i--)
-					if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
-						_tasks.RemoveAt(i);
-			}
+			for (var i = _tasks.Count - 1; i >= 0; i--)
+				if (_tasks[i].Type == TaskNode.TaskNodeType.Movement || _tasks[i].Type == TaskNode.TaskNodeType.Transition)
+					_tasks.RemoveAt(i);
+
 			// If close-follow is enabled and not close enough, add a direct movement task
-			else if (Settings.Movement.IsCloseFollowEnabled.Value)
+			if (Settings.Movement.IsCloseFollowEnabled.Value && distance >= Settings.Movement.PathfindingNodeDistance.Value)
+				_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+
+			// Always ensure a link task is present when close to leader and link support is enabled
+			if (Settings.Link.EnableLinkSupport.Value &&
+				!_tasks.Any(t => t.Type == TaskNode.TaskNodeType.Link))
 			{
-				if (distance >= Settings.Movement.PathfindingNodeDistance.Value)
-					_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.PathfindingNodeDistance.Value));
+				_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.Link));
 			}
 
 			// Quest loot logic (optional, keep if you use it)
@@ -968,13 +970,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 					_hasUsedWP = true;
 					_tasks.Add(new TaskNode(waypoint.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.ClaimWaypoint));
 				}
-			}
-
-			// Ensure link buff is triggered when close to leader
-			if (Settings.Link.EnableLinkSupport.Value &&
-				_tasks.FirstOrDefault(t => t.Type == TaskNode.TaskNodeType.Link) == null)
-			{
-				_tasks.Add(new TaskNode(_followTarget.Pos, Settings.Movement.ClearPathDistance.Value, TaskNode.TaskNodeType.Link));
 			}
 
 			_lastTargetPosition = _followTarget.Pos;
