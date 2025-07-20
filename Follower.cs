@@ -432,27 +432,33 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
                 }
             }
         }
-        
-        // Check for stuck condition
-        if (!_isStuck && _recentPositions.Count >= 5)
-        {
-            var timeSinceMovement = now - _lastPositionUpdate;
-            
-            // Check if we've been stationary for too long
-            if (timeSinceMovement > TimeSpan.FromMilliseconds(Settings.Safety.StuckTimeThreshold.Value))
-            {
-                var positionVariance = CalculatePositionVariance();
-                
-                // If position variance is low, we're probably stuck
-                if (positionVariance < Settings.Safety.StuckDistanceThreshold.Value)
-                {
-                    DetectStuckCondition(currentPosition, now);
-                }
-            }
-        }
-        
-        // Handle stuck recovery
-        if (_isStuck)
+
+		// Check for stuck condition
+		if (!_isStuck && _recentPositions.Count >= 5)
+		{
+			var timeSinceMovement = now - _lastPositionUpdate;
+
+			// Check if we've been stationary for too long
+			if (timeSinceMovement > TimeSpan.FromMilliseconds(Settings.Safety.StuckTimeThreshold.Value))
+			{
+				var positionVariance = CalculatePositionVariance();
+
+				// Check distance to leader
+				float distanceToLeader = _followTarget != null
+					? Vector3.Distance(currentPosition, _followTarget.Pos)
+					: float.MaxValue;
+
+				// Only trigger stuck detection if not close to leader
+				if (positionVariance < Settings.Safety.StuckDistanceThreshold.Value &&
+					distanceToLeader > Settings.Movement.ClearPathDistance.Value)
+				{
+					DetectStuckCondition(currentPosition, now);
+				}
+			}
+		}
+
+		// Handle stuck recovery
+		if (_isStuck)
         {
             HandleStuckRecovery(currentPosition, now);
         }
