@@ -36,7 +36,7 @@ public class MovementSettings
     public HotkeyNode MovementKey { get; set; } = Keys.T;
     
     [Menu("Follow Close", "Follow closely behind the leader")]
-    public ToggleNode IsCloseFollowEnabled { get; set; } = new ToggleNode(false);
+    public ToggleNode IsCloseFollowEnabled { get; set; } = new ToggleNode(true);
     
     [Menu("Min Path Distance", "Minimum distance to start pathfinding")]
     public RangeNode<int> PathfindingNodeDistance { get; set; } = new RangeNode<int>(200, 10, 1000);
@@ -70,10 +70,10 @@ public class MovementSettings
 public class PathfindingSettings
 {
     [Menu("Enable Advanced Pathfinding", "Use A* pathfinding instead of direct movement")]
-    public ToggleNode EnableAdvancedPathfinding { get; set; } = new ToggleNode(true);
+    public ToggleNode EnableAdvancedPathfinding { get; set; } = new ToggleNode(false);
     
     [Menu("Enable Predictive Following", "Predict where leader is going and follow ahead")]
-    public ToggleNode EnablePredictiveFollowing { get; set; } = new ToggleNode(true);
+    public ToggleNode EnablePredictiveFollowing { get; set; } = new ToggleNode(false);
     
     [Menu("Prediction Distance", "How far ahead to predict leader movement")]
     public RangeNode<int> PredictionDistance { get; set; } = new RangeNode<int>(200, 50, 500);
