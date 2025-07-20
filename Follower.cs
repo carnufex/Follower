@@ -229,8 +229,6 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
             // Update stuck detection and course correction
             UpdateStuckDetection();
 
-			HandleLinkBuff();
-
 			// Check for gem leveling
 			CheckAndLevelGems();
             
@@ -389,6 +387,7 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
     /// </summary>
     private bool IsLeaderInCombat(ActionFlags actionFlags)
     {
+        return false;
         // Check for combat-related action flags
         return (actionFlags & ActionFlags.UsingAbility) != 0 ||
                (actionFlags & ActionFlags.HasMines) != 0 ||
@@ -1224,32 +1223,15 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         var randomDelay = _random.Next(100, 300); // Always add random delay
         
         // Combat mode awareness: Use extra conservative timing during combat
-        if (_combatModeActive)
-        {
-            baseDelay = Math.Max(baseDelay * 2, 500); // Double delay during combat, minimum 500ms
-            randomDelay = _random.Next(200, 400); // Larger random delay during combat
-        }
+        //if (_combatModeActive)
+        //{
+        //    baseDelay = Math.Max(baseDelay * 2, 500); // Double delay during combat, minimum 500ms
+        //    randomDelay = _random.Next(200, 400); // Larger random delay during combat
+        //}
         
-        // If leader is not visible (out of range), use very slow timing
-        if (_followTarget == null)
+        if (_followTarget != null)
         {
-            baseDelay = Math.Max(baseDelay * 5, 1000); // At least 5x slower, minimum 1 second
-            randomDelay = _random.Next(200, 500); // Large random delay
-        }
-        else
-        {
-            // If leader is visible but far away, use slow timing
-            var leaderDistance = Vector3.Distance(GameController.Player.Pos, _followTarget.Pos);
-            if (leaderDistance > Settings.Movement.NormalFollowDistance.Value * 2)
-            {
-                baseDelay = Math.Max(baseDelay * 3, 750); // 3x slower, minimum 750ms
-                randomDelay = _random.Next(150, 350);
-            }
-            else if (leaderDistance > Settings.Movement.NormalFollowDistance.Value)
-            {
-                baseDelay = Math.Max(baseDelay * 2, 500); // 2x slower, minimum 500ms
-                randomDelay = _random.Next(100, 250);
-            }
+			HandleLinkBuff(); // leader visible, apply link
         }
         
         _nextBotAction = DateTime.Now.AddMilliseconds(baseDelay + randomDelay);
