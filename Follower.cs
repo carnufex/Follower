@@ -911,9 +911,14 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 			return;
 		}
 
-		if (_followTarget == null)
+		// If leader is not found OR leader is very far away (possibly in another room)
+		bool leaderMissingOrUnreachable = _followTarget == null;
+		float leaderDistance = _followTarget != null ? Vector3.Distance(GameController.Player.Pos, _followTarget.Pos) : float.MaxValue;
+
+		// You can tune this threshold (e.g., 2000 units)
+		if (leaderMissingOrUnreachable || leaderDistance > 2000f)
 		{
-			// Leader not found, try to use last known position for area transition
+			// Try to use last known position for area transition
 			if (_lastTargetPosition != Vector3.Zero && _tasks.Count == 0)
 			{
 				var nearbyTransition = _areaTransitions.Values
