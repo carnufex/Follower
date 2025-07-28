@@ -301,24 +301,21 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
         }
     }
 
-	private DateTime _lastLinkAttempt = DateTime.MinValue;
-
 	private void HandleLinkBuff()
 	{
-		if (!Settings.Link.EnableLinkSupport.Value)
+		var isHideout = (bool)GameController?.Area?.CurrentArea?.IsHideout;
+		if (!Settings.Link.EnableLinkSupport.Value || isHideout)
 			return;
 
 		float linkTime;
 		bool hasLink = IsLeaderLinkActive(out linkTime);
 
-		// Apply link if not present or if 5 seconds have passed since last cast
-		if (!hasLink || DateTime.Now - _lastLinkAttempt > TimeSpan.FromSeconds(5))
+		if (hasLink && linkTime < 2 || !hasLink)
 		{
 			MoveMouseToLeader(); // Move mouse before pressing key
 			Input.KeyDown(Settings.Link.LinkKey);
 			Input.KeyUp(Settings.Link.LinkKey);
 			RecordAction(); // To respect rate limiting
-			_lastLinkAttempt = DateTime.Now;
 		}
 	}
 
@@ -1346,10 +1343,25 @@ public class Follower : BaseSettingsPlugin<FollowerSettings>
 		var linkBuff = buffs.BuffsList.FirstOrDefault(b =>
 			b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase));
 
-		if (linkBuff != null && linkBuff.Timer != null)
+		if (linkBuff != null)
 		{
-			secondsRemaining = linkBuff.Timer;
-			return true;
+			// Try to get the timer from the source entity's buff
+			if (linkBuff.SourceEntity != null)
+			{
+				var sourceBuffs = linkBuff.SourceEntity.GetComponent<Buffs>()?.BuffsList;
+				if (sourceBuffs != null)
+				{
+					var sourceLinkBuff = sourceBuffs.FirstOrDefault(b =>
+						b.Name != null && b.Name.Contains("link", StringComparison.OrdinalIgnoreCase) &&
+						b.Timer != null);
+
+					if (sourceLinkBuff != null)
+					{
+						secondsRemaining = sourceLinkBuff.Timer;
+						return true;
+					}
+				}
+			}
 		}
 
 		return false;
